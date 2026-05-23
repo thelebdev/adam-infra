@@ -35,8 +35,10 @@ fi
 ADMIN_HOME="$(getent passwd "${ADMIN}" | cut -d: -f6)"
 [ -n "${ADMIN_HOME}" ] || die "cannot resolve home for ${ADMIN}"
 
-# Install ttyd from Ubuntu universe.
-apt_ensure ttyd
+# Install ttyd + tmux from Ubuntu universe. tmux is what makes the browser
+# sessions persistent: claude-session runs Claude inside it, so a refresh or
+# a dropped connection never kills a session.
+apt_ensure ttyd tmux
 
 # Ubuntu's ttyd package ships /usr/lib/systemd/system/ttyd.service which is
 # auto-enabled and runs `ttyd -i lo -p 7681 -O login` as root — i.e. a
@@ -56,59 +58,64 @@ if [ ! -x "${ADMIN_HOME}/.local/bin/claude-session" ]; then
   log INFO "claude-session not yet present at ${ADMIN_HOME}/.local/bin/ — 09-claude-code installs it"
 fi
 
-# Resolve CLAUDE_WORKDIR: the directory the browser Claude session opens in.
-# Prompt once on an interactive first install when it is blank, then persist
-# the answer to .env so re-runs and disaster-recovery runs (where .env is
-# already populated) stay non-interactive. No TTY (e.g. CI) -> use the default.
-if [ -z "${CLAUDE_WORKDIR:-}" ]; then
-  if [ -t 0 ]; then
-    printf '\n  Working directory the browser Claude session (claude.%s) opens in.\n' \
-      "${PRIMARY_DOMAIN}" >&2
-    printf '  Press Enter for the default (%s): ' "${ADMIN_HOME}" >&2
-    read -r CLAUDE_WORKDIR || true
-  fi
-  CLAUDE_WORKDIR="${CLAUDE_WORKDIR:-${ADMIN_HOME}}"
-fi
-# Normalise the path. `read` does not perform tilde expansion, so expand a
-# leading ~ ourselves; resolve any still-relative answer against the admin
-# home so a bare name typed at the prompt does not hard-fail.
-# SC2088: the "~/" pattern below is a literal case-pattern match, not an
-# attempt at tilde expansion; quoting it is correct.
+# Resolve WORKSPACE_ROOT: the directory tree that holds the projects browser
+# Claude sessions may open in. Every session is confined to this tree — it
+# can never run in $HOME or above the workspace root. Defaults to
+# ~/workspace; an explicit value in .env is used as-is. Persisted to .env so
+# re-runs and disaster-recovery runs stay non-interactive.
+#
+# CLAUDE_WORKDIR — the single fixed directory used before per-session
+# directories existed — is obsolete. Any existing value is left untouched in
+# .env and simply ignored.
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-${ADMIN_HOME}/workspace}"
+# A value read from .env gets no tilde expansion; expand a leading ~ and
+# resolve a still-relative value against the admin home.
 # shellcheck disable=SC2088
-case "${CLAUDE_WORKDIR}" in
-  "~")    CLAUDE_WORKDIR="${ADMIN_HOME}" ;;
-  "~/"*)  CLAUDE_WORKDIR="${ADMIN_HOME}/${CLAUDE_WORKDIR:2}" ;;
+case "${WORKSPACE_ROOT}" in
+  "~")    WORKSPACE_ROOT="${ADMIN_HOME}" ;;
+  "~/"*)  WORKSPACE_ROOT="${ADMIN_HOME}/${WORKSPACE_ROOT:2}" ;;
   /*)     : ;;
-  *)      CLAUDE_WORKDIR="${ADMIN_HOME}/${CLAUDE_WORKDIR}" ;;
+  *)      WORKSPACE_ROOT="${ADMIN_HOME}/${WORKSPACE_ROOT}" ;;
 esac
-case "${CLAUDE_WORKDIR}" in
+case "${WORKSPACE_ROOT}" in
   /*) : ;;
-  *)  die "could not resolve CLAUDE_WORKDIR to an absolute path: '${CLAUDE_WORKDIR}'" ;;
+  *)  die "could not resolve WORKSPACE_ROOT to an absolute path: '${WORKSPACE_ROOT}'" ;;
 esac
-set_env_var CLAUDE_WORKDIR "${CLAUDE_WORKDIR}"
-if [ -d "${CLAUDE_WORKDIR}" ]; then
-  log INFO "claude working directory ${CLAUDE_WORKDIR} already exists"
+set_env_var WORKSPACE_ROOT "${WORKSPACE_ROOT}"
+if [ -d "${WORKSPACE_ROOT}" ]; then
+  log INFO "workspace root ${WORKSPACE_ROOT} already exists"
 else
-  install -d -o "${ADMIN}" -g "${ADMIN}" "${CLAUDE_WORKDIR}"
-  log INFO "created claude working directory ${CLAUDE_WORKDIR} (owner ${ADMIN})"
+  install -d -o "${ADMIN}" -g "${ADMIN}" "${WORKSPACE_ROOT}"
+  log INFO "created workspace root ${WORKSPACE_ROOT} (owner ${ADMIN})"
 fi
+
+# Per-user tmux sockets live here — one socket per Authelia user, so each
+# user only ever sees their own sessions. 0700 so the sockets are not even
+# listable by other accounts. claude-session and the session-manager API
+# both derive this path the same way (~/.claude-sessions).
+SOCKET_DIR="${ADMIN_HOME}/.claude-sessions"
+install -d -m 700 -o "${ADMIN}" -g "${ADMIN}" "${SOCKET_DIR}"
+log INFO "per-user session socket dir ${SOCKET_DIR} ready"
 
 # Render the systemd unit.
 TEMPLATE="${INFRA_ROOT}/platform/ttyd/ttyd-claude.service.template"
 UNIT=/etc/systemd/system/ttyd-claude.service
 [ -f "${TEMPLATE}" ] || die "missing ${TEMPLATE}"
 
-python3 - "${TEMPLATE}" "${UNIT}" "${ADMIN}" "${ADMIN_HOME}" "${CLAUDE_WORKDIR}" <<'PYEOF'
+python3 - "${TEMPLATE}" "${UNIT}" "${ADMIN}" "${ADMIN_HOME}" \
+  "${WORKSPACE_ROOT}" "${SOCKET_DIR}" "${INFRA_ROOT}" <<'PYEOF'
 import sys
-src, dst, user, home, workdir = sys.argv[1:6]
+src, dst, user, home, workspace, sockets, infra_root = sys.argv[1:8]
 content = open(src).read()
-content = content.replace("__ADMIN_USER__", user)
-content = content.replace("__ADMIN_HOME__", home)
-content = content.replace("__CLAUDE_WORKDIR__", workdir)
+for token, value in (("__ADMIN_USER__", user), ("__ADMIN_HOME__", home),
+                     ("__WORKSPACE_ROOT__", workspace),
+                     ("__SOCKET_DIR__", sockets),
+                     ("__INFRA_ROOT__", infra_root)):
+    content = content.replace(token, value)
 open(dst, "w").write(content)
 PYEOF
 chmod 644 "${UNIT}"
-log INFO "rendered ${UNIT} (user=${ADMIN}, workdir=${CLAUDE_WORKDIR})"
+log INFO "rendered ${UNIT} (user=${ADMIN}, workspace=${WORKSPACE_ROOT})"
 
 systemctl daemon-reload
 systemctl enable ttyd-claude.service >/dev/null 2>&1 || true

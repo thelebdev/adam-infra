@@ -33,6 +33,10 @@ if [ -n "${PRIMARY_DOMAIN:-}" ]; then
   if [ "${INSTALL_DASHBOARD}" = "true" ]; then
     check "dashboard page rendered"    'test -f "${INFRA_ROOT}/platform/dashboard/index.html"'
   fi
+  if [ "${INSTALL_CLAUDE}" = "true" ] && [ "${INSTALL_DASHBOARD}" = "true" ]; then
+    check "session-manager service active" 'systemctl is-active --quiet session-manager.service'
+    check "session-manager API healthy"    'curl -sf http://127.0.0.1:7682/api/health'
+  fi
 else
   log INFO "SKIP: authelia/caddy/ttyd checks (PRIMARY_DOMAIN unset; intentionally not deployed)"
 fi
@@ -42,7 +46,7 @@ if [ "${INSTALL_CLAUDE}" = "true" ]; then
 fi
 
 # Dashboards must NOT be on the public interface. Caddy front-doors them.
-check "dashboards bound to localhost only" "! ss -tlnp | grep -E '0\.0\.0\.0:(3000|8080|61208|3001|7681|9091)\b'"
+check "dashboards bound to localhost only" "! ss -tlnp | grep -E '0\.0\.0\.0:(3000|8080|61208|3001|7681|7682|9091)\b'"
 
 if [ "${INSTALL_GLANCES}" = "true" ] || [ "${INSTALL_DOZZLE}" = "true" ] || [ "${INSTALL_NTOPNG}" = "true" ]; then
   check "observability containers up" 'docker ps -q --filter "label=com.docker.compose.project=infra-observability" --filter "status=running" | grep -q .'

@@ -35,6 +35,12 @@ PROFILE="${OBSERVABILITY_PROFILE:-lightweight}"
 disabled=""
 [ "${INSTALL_CLAUDE}"    = "true" ] || disabled="${disabled},claude"
 [ "${INSTALL_DASHBOARD}" = "true" ] || disabled="${disabled},dashboard"
+# The /api route inside the dashboard block (component:sessions) exists only
+# when both the dashboard (to host the page) and Claude (to have sessions to
+# manage) are installed.
+if [ "${INSTALL_CLAUDE}" != "true" ] || [ "${INSTALL_DASHBOARD}" != "true" ]; then
+  disabled="${disabled},sessions"
+fi
 # Glances/Dozzle/ntopng exist only on the lightweight profile.
 if [ "${PROFILE}" = "lightweight" ]; then
   [ "${INSTALL_DOZZLE}"  = "true" ] || disabled="${disabled},dozzle"
@@ -94,6 +100,13 @@ done
 rm -f "${CADDY_DIR}/.basicauth.env"
 
 log INFO "starting caddy (domain=${PRIMARY_DOMAIN})"
+# Pull the latest caddy:2 image so re-runs pick up patch releases — notably
+# the forward_auth header-spoofing fix (>= v2.11.2, CVE-2026-30851). The
+# Caddyfile already strips client-supplied identity headers, so this is the
+# belt to that suspenders, not the sole defence.
+docker compose --project-name infra-caddy \
+  -f "${CADDY_DIR}/docker-compose.yml" pull --quiet 2>/dev/null || \
+  log WARN "caddy image pull failed; continuing with the cached image"
 # --force-recreate so a re-run picks up changes to the bind-mounted Caddyfile
 # (compose does not detect file-mount content changes on its own).
 docker compose \

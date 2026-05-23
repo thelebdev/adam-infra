@@ -13,8 +13,17 @@ terminal, observability stack, backup orchestrator.
 - `caddy/` — reverse proxy with TLS, `forward_auth` to Authelia.
   - `Caddyfile.template` — rendered at bootstrap, subdomain-per-service.
   - `docker-compose.yml` — host-network Caddy container.
-- `ttyd/` — systemd unit template serving Claude Code in a browser tab via
-  `127.0.0.1:7681`, fronted by Caddy + Authelia.
+- `ttyd/` — the browser terminal for Claude Code.
+  - `ttyd-claude.service.template` — ttyd on `127.0.0.1:7681`, fronted by
+    Caddy + Authelia.
+  - `claude-session` — the helper ttyd runs: per-user, named, persistent
+    tmux-backed Claude sessions, confined to the workspace root.
+  - `claude-tmux.conf` — tmux config for those sessions (mouse scroll,
+    scrollback, status bar).
+- `session-manager/` — the dashboard backend for those sessions.
+  - `server.py` — a standard-library Python API on `127.0.0.1:7682`
+    (list / create / stop, per-user via the `Remote-User` header).
+  - `session-manager.service.template` — rendered at bootstrap.
 - `observability/` — observability stack.
   - `docker-compose.lightweight.yml` — Glances + Dozzle + ntopng (default).
   - `docker-compose.full.yml` — Loki + Prometheus + Grafana (>= 2 GiB RAM).

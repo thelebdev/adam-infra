@@ -7,35 +7,68 @@
 <title>Platform · __PRIMARY_DOMAIN__</title>
 <style>
   :root {
-    --bg: #0d1117; --surface: #161b22; --surface-hover: #1f2630;
-    --border: #30363d; --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --bg: #0d1117; --surface: #161b22; --surface-2: #1c2330;
+    --surface-hover: #222b39; --border: #30363d; --border-soft: #262c36;
+    --text: #e6edf3; --muted: #8b949e; --faint: #6e7681;
+    --accent: #58a6ff; --accent-dim: #1f6feb;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: var(--bg); color: var(--text);
+    background:
+      radial-gradient(900px 360px at 80% -8%, #16243b 0%, transparent 70%),
+      var(--bg);
+    color: var(--text); min-height: 100vh; padding: 1.75rem 1.5rem 3rem;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    line-height: 1.5; min-height: 100vh; padding: 1.5rem;
+    line-height: 1.5;
   }
-  .wrap { max-width: 920px; margin: 0 auto; }
-  header { padding: 1rem 0 1.5rem; }
-  h1 { font-size: 1.5rem; font-weight: 600; }
-  header .domain { color: var(--muted); font-size: .95rem; margin-top: .15rem; }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  /* header */
+  header { display: flex; align-items: baseline; gap: .75rem;
+           flex-wrap: wrap; padding-bottom: 1.5rem; }
+  h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: -.01em; }
+  .domain {
+    font-size: .82rem; color: var(--accent);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 999px; padding: .15rem .7rem;
+  }
   h2 {
     font-size: .8rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: .06em; color: var(--muted); margin: 2rem 0 .85rem;
+    letter-spacing: .07em; color: var(--muted);
   }
+  .section { margin-top: 2rem; }
+  .section-head {
+    display: flex; align-items: baseline; gap: .6rem;
+    flex-wrap: wrap; margin-bottom: .9rem;
+  }
+  .section-head .hint { font-size: .82rem; color: var(--faint); }
+
+  /* generic panel */
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+
+  /* tool cards */
   .grid {
     display: grid; gap: .85rem;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(224px, 1fr));
   }
   .card {
     display: flex; flex-direction: column; gap: .25rem;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 1rem 1.1rem;
+    border-radius: 12px; padding: 1rem 1.1rem;
     text-decoration: none; color: var(--text);
-    transition: background .12s ease, border-color .12s ease;
+    transition: background .12s ease, border-color .12s ease, transform .12s ease;
   }
-  .card:hover { background: var(--surface-hover); border-color: var(--accent); }
+  .card:hover {
+    background: var(--surface-hover); border-color: var(--accent);
+    transform: translateY(-1px);
+  }
   .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .card-name { font-weight: 600; font-size: 1.02rem; }
   .card-desc { color: var(--muted); font-size: .9rem; }
@@ -44,59 +77,270 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     word-break: break-all;
   }
-  .panel {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 1.1rem 1.2rem;
+
+  /* sessions */
+  .sessions { padding: 1.15rem 1.2rem 1.3rem; }
+  .new-session { display: flex; gap: .55rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .new-session input {
+    flex: 1 1 200px; min-width: 0;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: .55rem .7rem; font-size: .9rem;
   }
-  .panel p { color: var(--muted); font-size: .92rem; }
-  .panel code {
+  .new-session input:focus {
+    outline: none; border-color: var(--accent);
+  }
+  button, .btn {
+    font: inherit; font-size: .86rem; cursor: pointer;
+    border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text);
+    padding: .5rem .85rem; text-decoration: none;
+    transition: background .12s ease, border-color .12s ease;
+  }
+  button:hover, .btn:hover { background: var(--surface-hover); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: progress; }
+  .new-session button { background: var(--accent-dim); border-color: var(--accent-dim); }
+  .new-session button:hover { background: var(--accent); border-color: var(--accent); }
+
+  .srow {
+    display: grid; align-items: center;
+    grid-template-columns: minmax(110px,1fr) minmax(0,2.2fr) auto auto;
+    gap: .75rem; padding: .6rem .35rem;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .srow:last-child { border-bottom: 0; }
+  .srow.head {
+    font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--faint); padding-bottom: .4rem;
+  }
+  .scol-name { font-weight: 600; }
+  .scol-dir {
+    color: var(--muted); font-size: .85rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .scol-act { display: flex; gap: .4rem; justify-content: flex-end; }
+  .btn.open { color: var(--accent); }
+  .btn.stop:hover { border-color: var(--red); color: var(--red); }
+  .badge {
+    font-size: .74rem; padding: .12rem .5rem; border-radius: 999px;
+    border: 1px solid var(--border);
+  }
+  .badge.live { color: var(--green); border-color: #2c5331; background: #122119; }
+  .badge.idle { color: var(--faint); }
+  .banner {
+    font-size: .85rem; color: var(--red);
+    background: #2a1416; border: 1px solid #5c2a2a;
+    border-radius: 8px; padding: .55rem .75rem; margin-bottom: .8rem;
+  }
+  .muted { color: var(--muted); }
+  .pad { padding: .8rem .35rem; font-size: .9rem; }
+
+  /* users panel */
+  .users { padding: 1.1rem 1.2rem; }
+  .users p { color: var(--muted); font-size: .92rem; }
+  .users code {
     display: block; margin-top: .7rem; padding: .7rem .85rem;
     background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: .85rem; color: var(--text); overflow-x: auto;
   }
+
   footer {
     margin-top: 2.5rem; padding-top: 1.25rem;
     border-top: 1px solid var(--border);
-    color: var(--muted); font-size: .82rem;
+    color: var(--faint); font-size: .82rem;
   }
-  @media (max-width: 480px) { body { padding: 1rem; } }
+  @media (max-width: 560px) {
+    body { padding: 1.1rem 1rem 2.5rem; }
+    .srow { grid-template-columns: 1fr auto; row-gap: .3rem; }
+    .srow.head { display: none; }
+    .scol-dir { grid-column: 1 / -1; }
+    .scol-act { grid-column: 1 / -1; justify-content: flex-start; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>Platform</h1>
-    <div class="domain">__PRIMARY_DOMAIN__</div>
+    <span class="domain mono">__PRIMARY_DOMAIN__</span>
   </header>
 
-  <h2>Tools</h2>
-  <div class="grid">
-    __CLAUDE_CARD__
-    __DOZZLE_CARD__
-    __GLANCES_CARD__
-    __NTOPNG_CARD__
-    __GRAFANA_CARD__
-    <a class="card" href="https://__SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__">
-      <span class="card-name">Authelia</span>
-      <span class="card-desc">SSO portal and your 2FA settings</span>
-      <span class="card-host">__SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__</span>
-    </a>
-  </div>
+  <!-- >>>sessions -->
+  <section class="section">
+    <div class="section-head">
+      <h2>Claude sessions</h2>
+      <span class="hint">persistent &amp; per-user — survive a refresh, a logoff, or a dropped connection</span>
+    </div>
+    <div class="panel sessions">
+      <form class="new-session" id="ns-form" autocomplete="off">
+        <input type="text" id="ns-name" placeholder="new session name — e.g. api"
+               pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,31}"
+               title="letters, digits, _ and - (max 32)" required>
+        <input type="text" id="ns-dir" list="ws-dirs"
+               placeholder="project directory (blank = workspace root)">
+        <datalist id="ws-dirs"></datalist>
+        <button type="submit">Start session</button>
+      </form>
+      <div class="banner" id="ns-error" hidden></div>
+      <div id="ns-list"><div class="pad muted">loading…</div></div>
+    </div>
+  </section>
+  <script>
+  (function () {
+    "use strict";
+    var CLAUDE_BASE = "__CLAUDE_BASE_URL__";
+    var listEl = document.getElementById("ns-list");
+    var errEl = document.getElementById("ns-error");
+    var form = document.getElementById("ns-form");
+    var nameEl = document.getElementById("ns-name");
+    var dirEl = document.getElementById("ns-dir");
+    var dirList = document.getElementById("ws-dirs");
+    var timer = null;
 
-  <h2>Users</h2>
-  <div class="panel">
-    <p>
-      Every tool above is gated by Authelia single sign-on (password + TOTP).
-      To grant someone access, add an Authelia user from an SSH session on the
-      server:
-    </p>
-    <code>sudo /opt/infra/platform/authelia/add-user.sh &lt;username&gt;</code>
-    <p style="margin-top:.7rem">
-      The script sets the password, enrols a TOTP device, and prints the
-      enrolment QR for the new user to scan.
-    </p>
-  </div>
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+      });
+    }
+    function rel(sec) {
+      if (sec < 90) return "active";
+      if (sec < 3600) return Math.floor(sec / 60) + "m idle";
+      if (sec < 86400) return Math.floor(sec / 3600) + "h idle";
+      return Math.floor(sec / 86400) + "d idle";
+    }
+    function showError(msg) { errEl.textContent = msg || ""; errEl.hidden = !msg; }
+
+    function api(method, path, body) {
+      var opts = { method: method, headers: {} };
+      if (body) {
+        opts.headers["Content-Type"] = "application/json";
+        opts.body = JSON.stringify(body);
+      }
+      return fetch(path, opts).then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (d) {
+          if (!res.ok) throw new Error(d.error || ("HTTP " + res.status));
+          return d;
+        });
+      });
+    }
+
+    function render(sessions) {
+      if (!sessions.length) {
+        listEl.innerHTML = '<div class="pad muted">No sessions yet — '
+          + 'start one above. Each is an independent Claude Code instance.</div>';
+        return;
+      }
+      var head = '<div class="srow head"><div>Session</div><div>Directory</div>'
+        + '<div>State</div><div></div></div>';
+      var rows = sessions.map(function (s) {
+        var url = CLAUDE_BASE + "/?arg=" + encodeURIComponent(s.name);
+        var badge = s.attached
+          ? '<span class="badge live">attached</span>'
+          : '<span class="badge idle">' + esc(rel(s.idle_seconds)) + '</span>';
+        return '<div class="srow">'
+          + '<div class="scol-name">' + esc(s.name) + '</div>'
+          + '<div class="scol-dir" title="' + esc(s.dir) + '">' + esc(s.dir) + '</div>'
+          + '<div>' + badge + ' <span class="muted">' + (s.windows || 1) + 'w</span></div>'
+          + '<div class="scol-act">'
+          + '<a class="btn open" href="' + esc(url) + '" target="_blank" rel="noopener">Open &#8599;</a>'
+          + '<button class="btn stop" data-name="' + esc(s.name) + '">Stop</button>'
+          + '</div></div>';
+      });
+      listEl.innerHTML = head + rows.join("");
+    }
+
+    function refresh() {
+      return api("GET", "/api/sessions").then(function (d) {
+        showError("");
+        render(d.sessions || []);
+      }).catch(function (e) {
+        showError("Could not load sessions: " + e.message);
+      });
+    }
+    function loadDirs() {
+      return api("GET", "/api/workspace").then(function (d) {
+        dirList.innerHTML = (d.dirs || []).map(function (x) {
+          return '<option value="' + esc(x) + '"></option>';
+        }).join("");
+      }).catch(function () {});
+    }
+
+    listEl.addEventListener("click", function (ev) {
+      var btn = ev.target.closest && ev.target.closest(".btn.stop");
+      if (!btn) return;
+      var name = btn.getAttribute("data-name");
+      if (!window.confirm('Stop "' + name + '"? Its Claude process ends.')) return;
+      btn.disabled = true;
+      api("DELETE", "/api/sessions/" + encodeURIComponent(name))
+        .then(refresh)
+        .catch(function (e) {
+          showError("Could not stop " + name + ": " + e.message);
+          btn.disabled = false;
+        });
+    });
+
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var name = nameEl.value.trim();
+      if (!name) return;
+      var submit = form.querySelector("button");
+      submit.disabled = true;
+      api("POST", "/api/sessions", { name: name, dir: dirEl.value.trim() })
+        .then(function () {
+          nameEl.value = ""; dirEl.value = "";
+          return Promise.all([refresh(), loadDirs()]);
+        })
+        .catch(function (e) { showError("Could not start " + name + ": " + e.message); })
+        .then(function () { submit.disabled = false; });
+    });
+
+    function start() {
+      if (timer) clearInterval(timer);
+      timer = setInterval(refresh, 5000);
+    }
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { clearInterval(timer); }
+      else { refresh(); start(); }
+    });
+    refresh();
+    loadDirs();
+    start();
+  })();
+  </script>
+  <!-- <<<sessions -->
+
+  <section class="section">
+    <div class="section-head"><h2>Tools</h2></div>
+    <div class="grid">
+      __CLAUDE_CARD__
+      __DOZZLE_CARD__
+      __GLANCES_CARD__
+      __NTOPNG_CARD__
+      __GRAFANA_CARD__
+      <a class="card" href="https://__SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__">
+        <span class="card-name">Authelia</span>
+        <span class="card-desc">SSO portal and your 2FA settings</span>
+        <span class="card-host">__SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__</span>
+      </a>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>Users</h2></div>
+    <div class="panel users">
+      <p>
+        Every tool here is gated by Authelia single sign-on (password + TOTP).
+        To grant someone access, add an Authelia user from an SSH session on
+        the server:
+      </p>
+      <code>sudo /opt/infra/platform/authelia/add-user.sh &lt;username&gt;</code>
+      <p style="margin-top:.7rem">
+        The script sets the password, enrols a TOTP device, and prints the
+        enrolment QR. Each user gets their own private set of Claude sessions.
+      </p>
+    </div>
+  </section>
 
   <footer>
     Platform layer · gated by Authelia SSO · served by Caddy.

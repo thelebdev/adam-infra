@@ -39,32 +39,15 @@ for rc in "${ADMIN_HOME}/.profile" "${ADMIN_HOME}/.bashrc"; do
   chown "${ADMIN}:${ADMIN}" "${rc}" 2>/dev/null || true
 done
 
-# Install the shared-session helper: one always-on Claude Code instance in a
-# named tmux session, attachable from any device (laptop, phone), surviving
-# disconnects. Same live instance for everyone who attaches.
+# Install the session helper that ttyd runs in the browser terminal. It
+# attaches to (or creates) per-user, per-name, workspace-confined Claude
+# sessions in tmux — see platform/ttyd/claude-session for the full design.
+HELPER_SRC="${INFRA_ROOT}/platform/ttyd/claude-session"
 HELPER="${ADMIN_HOME}/.local/bin/claude-session"
+[ -f "${HELPER_SRC}" ] || die "missing ${HELPER_SRC}"
 install -d -o "${ADMIN}" -g "${ADMIN}" "${ADMIN_HOME}/.local/bin"
-cat > "${HELPER}" <<'EOF'
-#!/usr/bin/env bash
-# Attach to the shared, always-on Claude Code session, or create it.
-# Run from any device; same live instance. Detach (keep it running):
-# Ctrl-b then d.
-#
-# Working directory precedence: explicit first argument, else CLAUDE_WORKDIR
-# from /opt/infra/.env, else $HOME. The directory only applies when the
-# session is first created; an existing session keeps its directory until it
-# is killed (re-running bootstrap restarts it).
-set -euo pipefail
-workdir="${1:-}"
-if [ -z "${workdir}" ]; then
-  workdir="$(grep -m1 '^CLAUDE_WORKDIR=' /opt/infra/.env 2>/dev/null | cut -d= -f2- || true)"
-fi
-[ -n "${workdir}" ] && [ -d "${workdir}" ] || workdir="${HOME}"
-exec tmux new-session -A -s claude -c "${workdir}" claude
-EOF
-chmod +x "${HELPER}"
-chown "${ADMIN}:${ADMIN}" "${HELPER}"
-log INFO "installed claude-session helper for ${ADMIN}"
+install -m 755 -o "${ADMIN}" -g "${ADMIN}" "${HELPER_SRC}" "${HELPER}"
+log INFO "installed claude-session helper for ${ADMIN} (from ${HELPER_SRC})"
 
 # Make the API key available to the admin shell only if provided (never logged).
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then

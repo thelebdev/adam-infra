@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+# claude-session — per-user, persistent, workspace-confined Claude Code
+# sessions, backed by tmux.
+#
+# This is the command ttyd runs for the browser terminal
+# (see platform/ttyd/ttyd-claude.service.template). It also works over SSH.
+#
+# Why this exists:
+#   * Persistence — each session runs inside tmux, so a browser refresh, a
+#     logoff, or a dropped connection never kills it. Re-opening re-attaches
+#     to the same live session. Detach without killing: Ctrl-b then d.
+#   * Many sessions — every session is an independent Claude Code instance.
+#     ttyd is started with -a (URL args), so opening
+#     https://claude.<domain>/?arg=<name> in another browser tab gives a
+#     second, separate session. With no name you get an interactive menu.
+#   * Per-user isolation — ttyd passes the Authelia identity as $TTYD_USER
+#     (ttyd -H Remote-User). Each user gets their own tmux socket under
+#     CLAUDE_SOCKET_DIR and therefore only ever sees their own sessions.
+#     NOTE: a visibility boundary, not a security boundary — every session
+#     still runs as the single OS account ttyd runs as.
+#   * Confined directories — a new session may only open a directory inside
+#     CLAUDE_WORKSPACE_ROOT. It can never run in $HOME or any directory above
+#     the workspace root.
+#
+# Environment (the systemd unit sets these; the defaults cover direct SSH):
+#   TTYD_USER              authenticated user — REQUIRED, fail-closed
+#   CLAUDE_WORKSPACE_ROOT  workspace root          (default: ~/workspace)
+#   CLAUDE_SOCKET_DIR      per-user tmux sockets   (default: ~/.claude-sessions)
+#   CLAUDE_TMUX_CONF       tmux config for sessions
+#                          (default: /opt/infra/platform/ttyd/claude-tmux.conf)
+set -euo pipefail
+
+WORKSPACE_ROOT="${CLAUDE_WORKSPACE_ROOT:-${HOME}/workspace}"
+SOCKET_DIR="${CLAUDE_SOCKET_DIR:-${HOME}/.claude-sessions}"
+TMUX_CONF="${CLAUDE_TMUX_CONF:-/opt/infra/platform/ttyd/claude-tmux.conf}"
+
+# A session name: 1–32 chars, starts alphanumeric, then alphanumeric / _ / -.
+# Excludes '.' and ':', which tmux treats specially.
+NAME_RE='^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$'
+# A username: the shape platform/authelia/add-user.sh enforces.
+USER_RE='^[a-z_][a-z0-9_-]{0,30}$'
+# Field separator for `tmux list-sessions -F` output — a control byte that
+# cannot occur in a session name or a filesystem path.
+SEP=$'\x1f'
+
+# --- output helpers (all to stderr; stdout is reserved for return values) --
+_sgr() { [ -t 2 ] && printf '\033[%sm' "$1" >&2 || true; }
+say()  { printf '%s\n' "$*" >&2; }
+err()  { _sgr 31; printf 'error: %s\n' "$*" >&2; _sgr 0; }
+dim()  { _sgr 2;  printf '%s\n' "$*" >&2;          _sgr 0; }
+hdr()  { _sgr '1;36'; printf '%s\n' "$*" >&2;      _sgr 0; }
+
+# --- pure helpers (unit-tested via CLAUDE_SESSION_LIB=1) -------------------
+
+valid_name() { printf '%s' "${1-}" | grep -qE "$NAME_RE"; }
+valid_user() { printf '%s' "${1-}" | grep -qE "$USER_RE"; }
+
+# Resolve a directory request to an absolute path strictly inside
+# WORKSPACE_ROOT. Echo the safe path and return 0, or return 1 if the request
+# escapes the workspace (an absolute path, a `..` climb, or a symlink that
+# leads out). The path need not exist yet.
+confine_dir() {
+  local req="${1-}" root abs
+  root="$(realpath -m -- "$WORKSPACE_ROOT" 2>/dev/null)" || return 1
+  case "$req" in
+    "") abs="$root" ;;
+    /*) abs="$req" ;;
+    *)  abs="$root/$req" ;;
+  esac
+  abs="$(realpath -m -- "$abs" 2>/dev/null)" || return 1
+  if [ "$abs" = "$root" ] || [ "$abs" != "${abs#"$root"/}" ]; then
+    printf '%s\n' "$abs"
+    return 0
+  fi
+  return 1
+}
+
+# --- tmux plumbing --------------------------------------------------------
+# Globals set by setup(): USER_ID, SOCKET, TM (array).
+
+setup() {
+  command -v tmux >/dev/null 2>&1 || { err "tmux is not installed."; exit 1; }
+
+  USER_ID="${TTYD_USER:-${USER:-}}"
+  if [ -z "$USER_ID" ]; then
+    err "no authenticated user (TTYD_USER unset)."
+    say "Reach this terminal through the platform portal, not directly."
+    exit 1
+  fi
+  if ! valid_user "$USER_ID"; then
+    err "refusing: malformed user identity."
+    exit 1
+  fi
+
+  mkdir -p -- "$SOCKET_DIR"; chmod 700 -- "$SOCKET_DIR"
+  mkdir -p -- "$WORKSPACE_ROOT"
+
+  SOCKET="$SOCKET_DIR/$USER_ID.sock"
+  TM=(tmux)
+  [ -r "$TMUX_CONF" ] && TM+=(-f "$TMUX_CONF")
+  TM+=(-S "$SOCKET")
+
+  if ! command -v claude >/dev/null 2>&1; then
+    err "the 'claude' command is not on PATH — sessions will fail to start."
+  fi
+}
+
+tm() { "${TM[@]}" "$@"; }
+
+# One line per session: name, window count, attach state, current directory.
+session_rows() {
+  tm list-sessions -F \
+    "#{session_name}${SEP}#{session_windows}${SEP}#{?session_attached,attached,idle}${SEP}#{pane_current_path}" \
+    2>/dev/null || true
+}
+
+# open_session <name> [dir] — create the session if absent, then attach.
+# Returns when the user detaches (Ctrl-b d); never kills the session.
+open_session() {
+  local name="$1" dir="${2:-$WORKSPACE_ROOT}"
+  if ! tm has-session -t "=$name" 2>/dev/null; then
+    if [ -n "${CLAUDE_SESSION_DRYRUN:-}" ]; then
+      printf 'CREATE %s %s\n' "$name" "$dir"; return 0
+    fi
+    mkdir -p -- "$dir"
+    tm new-session -d -s "$name" -c "$dir" claude
+    say "started session '$name' in $dir"
+  elif [ -n "${CLAUDE_SESSION_DRYRUN:-}" ]; then
+    printf 'ATTACH %s\n' "$name"; return 0
+  fi
+  tm attach-session -t "=$name" || true
+}
+
+# --- interactive flows ----------------------------------------------------
+
+# choose_dir <name> — prompt for a directory (prompts to stderr); echo a
+# confined absolute path to stdout, or return 1 if cancelled / refused.
+choose_dir() {
+  local name="$1" dirs=() d i req abs
+  if [ -d "$WORKSPACE_ROOT" ]; then
+    while IFS= read -r d; do dirs+=("$d"); done < <(
+      find "$WORKSPACE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+        2>/dev/null | sort)
+  fi
+  {
+    printf '\n  Directory for "%s" — must be inside %s\n\n' "$name" "$WORKSPACE_ROOT"
+    if [ "${#dirs[@]}" -gt 0 ]; then
+      i=1
+      for d in "${dirs[@]}"; do printf '   %2d) %s\n' "$i" "$d"; i=$((i+1)); done
+    else
+      printf '   (workspace is empty)\n'
+    fi
+    printf '\n  Pick a number, or type a new project name. Blank cancels.\n  > '
+  } >&2
+  read -r req || return 1
+  [ -z "$req" ] && return 1
+  if [[ "$req" =~ ^[0-9]+$ ]] && [ "$req" -ge 1 ] && [ "$req" -le "${#dirs[@]}" ]; then
+    req="${dirs[$((req - 1))]}"
+  fi
+  if ! abs="$(confine_dir "$req")"; then
+    err "'$req' is outside the workspace — refused."
+    return 1
+  fi
+  printf '%s\n' "$abs"
+}
+
+new_session_flow() {
+  local name dir
+  printf '\n  New session name (letters, digits, _ -): ' >&2
+  read -r name || return 0
+  if ! valid_name "$name"; then
+    err "invalid name."
+    return 0
+  fi
+  if tm has-session -t "=$name" 2>/dev/null; then
+    err "session '$name' already exists — open it from the list."
+    return 0
+  fi
+  dir="$(choose_dir "$name")" || { dim "  cancelled."; return 0; }
+  open_session "$name" "$dir"
+}
+
+kill_by_index() {
+  local idx="${1// /}" rows=() row name ans
+  while IFS= read -r row; do [ -n "$row" ] && rows+=("$row"); done \
+    < <(session_rows)
+  if ! [[ "$idx" =~ ^[0-9]+$ ]] || [ "$idx" -lt 1 ] || [ "$idx" -gt "${#rows[@]}" ]; then
+    err "no session #$idx"
+    return 0
+  fi
+  name="${rows[$((idx - 1))]%%"$SEP"*}"
+  printf '  kill "%s" and stop its Claude? [y/N] ' "$name" >&2
+  read -r ans || return 0
+  case "$ans" in
+    [Yy]*)
+      if tm kill-session -t "=$name" 2>/dev/null; then say "  killed '$name'."
+      else err "could not kill '$name'."; fi ;;
+    *) dim "  kept." ;;
+  esac
+}
+
+menu() {
+  local rows row name wins state path i choice
+  while :; do
+    rows=()
+    while IFS= read -r row; do [ -n "$row" ] && rows+=("$row"); done \
+      < <(session_rows)
+    printf '\n' >&2
+    hdr "  Claude sessions · $USER_ID"
+    dim  "  workspace: $WORKSPACE_ROOT"
+    printf '\n' >&2
+    if [ "${#rows[@]}" -eq 0 ]; then
+      dim "  no sessions yet — press n to start one"
+    else
+      i=1
+      for row in "${rows[@]}"; do
+        IFS="$SEP" read -r name wins state path <<<"$row"
+        printf '   %2d) %-22s [%s · %sw] %s\n' \
+          "$i" "$name" "$state" "$wins" "$path" >&2
+        i=$((i + 1))
+      done
+    fi
+    {
+      printf '\n'
+      printf '  <number> open    n new    k <number> kill    q quit\n'
+      printf '  > '
+    } >&2
+    read -r choice || { printf '\n' >&2; return 0; }
+    case "$choice" in
+      "" | q | Q) return 0 ;;
+      n | N)      new_session_flow ;;
+      k\ * | K\ *) kill_by_index "${choice#* }" ;;
+      k* | K*)    err "usage: k <number>" ;;
+      *[!0-9]*)   err "not a choice: $choice" ;;
+      *)
+        if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "${#rows[@]}" ]; then
+          name="${rows[$((choice - 1))]%%"$SEP"*}"
+          open_session "$name"
+        else
+          err "no session #$choice"
+        fi ;;
+    esac
+  done
+}
+
+main() {
+  local arg="${1-}" dir
+  setup
+  if [ -n "$arg" ]; then
+    if valid_name "$arg"; then
+      if tm has-session -t "=$arg" 2>/dev/null; then
+        open_session "$arg"
+      else
+        # A new session named via the ttyd URL — ask where it should open.
+        if dir="$(choose_dir "$arg")"; then
+          open_session "$arg" "$dir"
+        fi
+      fi
+    else
+      err "ignoring invalid session name from URL: '$arg'"
+    fi
+  fi
+  # After a detach (or an invalid/declined arg) drop into the menu rather
+  # than leaving a dead terminal.
+  menu
+}
+
+# Library mode: tests source this file with CLAUDE_SESSION_LIB=1 to exercise
+# the pure helpers without starting tmux.
+if [ -z "${CLAUDE_SESSION_LIB:-}" ]; then
+  main "$@"
+fi
