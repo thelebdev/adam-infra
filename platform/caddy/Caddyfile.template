@@ -33,6 +33,15 @@
 
 # Snippet: gate a route on a valid Authelia session.
 (authelia_gate) {
+	# Strip any client-supplied identity headers BEFORE consulting Authelia.
+	# forward_auth's copy_headers only *sets* these from the auth response —
+	# it never deletes a value the client sent (CVE-2026-30851 / Caddy <
+	# v2.11.2). Without this strip a logged-in user could spoof Remote-User
+	# and impersonate another, defeating the per-user session isolation.
+	request_header -Remote-User
+	request_header -Remote-Groups
+	request_header -Remote-Name
+	request_header -Remote-Email
 	forward_auth 127.0.0.1:9091 {
 		uri /api/verify?rd=https%3A%2F%2F__SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__
 		copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
@@ -46,13 +55,25 @@ __SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__ {
 }
 
 # >>>component:dashboard
-# Platform landing page: the tool index, served as static files by Caddy.
-# Reachable at the apex domain and the dashboard subdomain. Gated by Authelia.
+# Platform landing page: the tool index plus the live "Claude sessions"
+# section. Reachable at the apex domain and the dashboard subdomain. Gated by
+# Authelia.
 __PRIMARY_DOMAIN__, __SUBDOMAIN_DASHBOARD__.__PRIMARY_DOMAIN__ {
 	import secure_headers
 	import authelia_gate
-	root * /srv/dashboard
-	file_server
+# >>>component:sessions
+	# The dashboard's "Claude sessions" section calls the session-manager
+	# API. Same origin, same Authelia gate — no extra subdomain. Authelia
+	# runs first (forward_auth expands to a `route`, ordered before `handle`),
+	# so the API always receives a verified Remote-User.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:7682
+	}
+# <<<component:sessions
+	handle {
+		root * /srv/dashboard
+		file_server
+	}
 }
 # <<<component:dashboard
 

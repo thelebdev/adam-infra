@@ -49,8 +49,11 @@ mkcard() {
     "$1" "$2" "$3" "$1"
 }
 
+# Base URL the dashboard's "Claude sessions" section links to (the per-row
+# "Open" buttons point browsers at claude.<domain>/?arg=<session>).
+CLAUDE_BASE_URL="https://${SUBDOMAIN_CLAUDE}.${PRIMARY_DOMAIN}"
 CLAUDE_CARD=""
-[ "${INSTALL_CLAUDE}" = "true" ] && CLAUDE_CARD="$(mkcard "${SUBDOMAIN_CLAUDE}" 'Claude Code' 'Agent terminal in the browser')"
+[ "${INSTALL_CLAUDE}" = "true" ] && CLAUDE_CARD="$(mkcard "${SUBDOMAIN_CLAUDE}" 'Claude Code' 'Browser terminal — open or start a session')"
 # Glances/Dozzle/ntopng exist only on the lightweight profile.
 DOZZLE_CARD=""
 GLANCES_CARD=""
@@ -64,14 +67,26 @@ GRAFANA_CARD=""
 [ "${PROFILE}" = "full" ] && GRAFANA_CARD="$(mkcard "${SUBDOMAIN_GRAFANA}" 'Grafana' 'Metrics and log dashboards')"
 
 python3 - "${TEMPLATE}" "${OUT}" "${PRIMARY_DOMAIN}" "${SUBDOMAIN_AUTH}" \
-  "${CLAUDE_CARD}" "${DOZZLE_CARD}" "${GLANCES_CARD}" "${NTOPNG_CARD}" "${GRAFANA_CARD}" <<'PYEOF'
-import sys
-src, dst, domain, sub_auth, claude, dozzle, glances, ntopng, grafana = sys.argv[1:10]
+  "${CLAUDE_CARD}" "${DOZZLE_CARD}" "${GLANCES_CARD}" "${NTOPNG_CARD}" "${GRAFANA_CARD}" \
+  "${INSTALL_CLAUDE}" "${CLAUDE_BASE_URL}" <<'PYEOF'
+import re, sys
+(src, dst, domain, sub_auth, claude, dozzle, glances, ntopng, grafana,
+ install_claude, claude_url) = sys.argv[1:12]
 content = open(src).read()
+# The dynamic "Claude sessions" section only works when Claude (and its
+# session-manager API) is installed. Keep it and drop just the marker
+# comments, or strip the whole marked region otherwise.
+if install_claude == "true":
+    content = re.sub(r"[ \t]*<!-- (?:>>>|<<<)sessions -->[ \t]*\n", "", content)
+else:
+    content = re.sub(
+        r"[ \t]*<!-- >>>sessions -->.*?<!-- <<<sessions -->[ \t]*\n",
+        "", content, flags=re.S)
 for token, card in (("__CLAUDE_CARD__", claude), ("__DOZZLE_CARD__", dozzle),
                      ("__GLANCES_CARD__", glances), ("__NTOPNG_CARD__", ntopng),
                      ("__GRAFANA_CARD__", grafana)):
     content = content.replace(token, card)
+content = content.replace("__CLAUDE_BASE_URL__", claude_url)
 content = content.replace("__SUBDOMAIN_AUTH__", sub_auth)
 content = content.replace("__PRIMARY_DOMAIN__", domain)
 open(dst, "w").write(content)

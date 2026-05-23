@@ -121,6 +121,7 @@ STEPS=(
   08-observability.sh
   09-claude-code.sh
   10-dashboard.sh
+  11-session-manager.sh
   99-verify.sh
 )
 

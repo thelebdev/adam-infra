@@ -8,6 +8,24 @@ Each entry: date, mode (Maintain / Manage / Create), one-line summary.
 
 ## Entries
 
+- **2026-05-23** — Create — The browser Claude terminal is now
+  **multi-session and per-user**. ttyd runs the new `claude-session` helper,
+  which attaches to (or creates) named, tmux-backed sessions: a browser
+  refresh, a logoff, or a dropped connection no longer kills anything, and
+  `claude.<domain>/?arg=<name>` opens an independent Claude in each tab. ttyd
+  forwards the Authelia identity (`-H Remote-User` → `$TTYD_USER`); each user
+  gets a private tmux socket and sees only their own sessions. New sessions
+  are confined to `WORKSPACE_ROOT` (default `~/workspace`) — never `$HOME` or
+  above it; the old single-directory `CLAUDE_WORKDIR` is retired (any value
+  left in `.env` is ignored). New **session-manager** service
+  (`11-session-manager.sh` — standard-library Python on `127.0.0.1:7682`)
+  backs a live **Claude sessions** section on the dashboard: list, open,
+  start, and stop sessions. tmux mouse mode is on, so the browser scroll
+  wheel scrolls the buffer instead of walking shell history. Caddy now strips
+  client-supplied `Remote-*` headers before `forward_auth` (CVE-2026-30851)
+  and is pulled to the latest patched image; `ttyd-claude` and
+  `session-manager` use `KillMode=process` so sessions survive a restart or a
+  bootstrap re-run. First unit tests landed under `tests/infra/`.
 - **2026-05-21** — Create — `bootstrap.sh` now offers to customize the
   subdomain label for each component (`SUBDOMAIN_*` flags, prompted behind a
   single yes/no gate, persisted to `.env`). `auth`, `claude`, `grafana` and

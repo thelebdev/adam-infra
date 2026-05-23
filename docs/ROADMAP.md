@@ -6,6 +6,21 @@ CHANGELOG when delivered.
 
 ## Recently delivered
 
+### Persistent, multi-session, per-user browser Claude
+
+ttyd now serves named, tmux-backed Claude Code sessions through the
+`claude-session` helper. A session survives a browser refresh, a logoff, or a
+dropped connection; `claude.<domain>/?arg=<name>` gives each browser tab its
+own independent Claude. Each Authelia user gets a private set of sessions —
+a per-user tmux socket keyed off `$TTYD_USER` (ttyd `-H Remote-User`). New
+sessions are confined to `WORKSPACE_ROOT`; they can never run in `$HOME` or
+above it. The dashboard gained a live **Claude sessions** section (list /
+open / start / stop) backed by the new `session-manager` service
+(`11-session-manager.sh`). Caddy was hardened against the `forward_auth`
+identity-header spoof (CVE-2026-30851). Session-level isolation only — all
+sessions still run as the one admin OS account; OS-level isolation (per-user
+Linux accounts) remains a possible future step.
+
 ### Platform dashboard + configurable Claude working directory
 
 A static landing page at the apex domain and `dashboard.<domain>` indexes
