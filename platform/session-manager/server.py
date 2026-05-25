@@ -44,9 +44,14 @@ LISTEN_PORT = int(os.environ.get("SM_LISTEN_PORT", "7682"))
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 # A username: the shape platform/authelia/add-user.sh enforces.
 USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,30}$")
-# Field separator for `tmux list-sessions -F` — a control byte that cannot
-# occur in a session name or a filesystem path.
-SEP = "\x1f"
+# Field separator for `tmux list-sessions -F`. A printable character is
+# essential — tmux 3.x escapes non-printable bytes in formatted output (the
+# byte 0x1f becomes the literal four-character sequence ``\037``), which
+# breaks any single-character control-byte separator. `|` cannot appear in
+# session names (NAME_RE), is rare in paths, and never escaped by tmux. The
+# trailing field (path) is captured with a max-split so any stray `|` inside
+# a path remains part of the path rather than producing extra columns.
+SEP = "|"
 TMUX_TIMEOUT = 10
 MAX_BODY = 64 * 1024
 
@@ -227,7 +232,9 @@ def list_sessions(user: str) -> list[dict[str, Any]]:
     now = int(time.time())
     sessions: list[dict[str, Any]] = []
     for line in res.stdout.splitlines():
-        parts = line.split(SEP)
+        # Path is the last field — use a max-split so any `|` inside a path
+        # stays with the path rather than producing extra columns.
+        parts = line.split(SEP, 5)
         if len(parts) != 6:
             continue
         name, windows, attached, created, activity, path = parts

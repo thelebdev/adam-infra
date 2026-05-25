@@ -202,6 +202,21 @@ class TmuxTests(WorkspaceTestCase):
         self.assertFalse(server._marker_path("alice", "api").exists())
 
 
+class SepTests(unittest.TestCase):
+    """tmux 3.x escapes non-printable bytes in `-F` output (0x1f becomes
+    the literal four-character sequence ``\\037``), so a control-byte SEP
+    silently breaks the parse and `list_sessions` returns []. Keep SEP
+    printable, single-character, and not allowed in session names."""
+
+    def test_sep_is_printable_single_char(self) -> None:
+        self.assertEqual(len(server.SEP), 1)
+        self.assertTrue(server.SEP.isprintable())
+        self.assertNotEqual(server.SEP, " ")
+
+    def test_sep_cannot_appear_in_session_name(self) -> None:
+        self.assertNotRegex(server.SEP, server.NAME_RE)
+
+
 class CmdArgvTests(unittest.TestCase):
     def test_shell_argv_has_login_flag(self) -> None:
         argv = server.cmd_argv("shell")

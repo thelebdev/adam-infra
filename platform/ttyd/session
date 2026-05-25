@@ -42,9 +42,12 @@ TMUX_CONF="${SESSION_TMUX_CONF:-/opt/infra/platform/ttyd/session-tmux.conf}"
 NAME_RE='^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$'
 # A username: the shape platform/authelia/add-user.sh enforces.
 USER_RE='^[a-z_][a-z0-9_-]{0,30}$'
-# Field separator for `tmux list-sessions -F` output — a control byte that
-# cannot occur in a session name or a filesystem path.
-SEP=$'\x1f'
+# Field separator for `tmux list-sessions -F` output. tmux 3.x escapes
+# non-printable bytes in formatted output (0x1f → literal `\037`), so a
+# control-byte separator silently breaks the parse. `|` is printable, never
+# valid in a session name (NAME_RE), and rare in paths; we put path last
+# and read it as the final field so any stray `|` stays with the path.
+SEP='|'
 # Allowed command choices. Keep this set tight — it's the safety boundary
 # for what a user can run inside a session.
 CMD_ALLOWLIST=(shell claude)
