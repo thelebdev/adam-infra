@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# 07 - ttyd: web terminal that serves Claude Code in a browser tab.
-# Reachable at claude.<PRIMARY_DOMAIN> through Caddy (gated by Authelia).
-# Binds to 127.0.0.1:7681 only.
+# 07 - ttyd: web terminal that serves per-user browser sessions.
+# Reachable at sessions.<PRIMARY_DOMAIN> through Caddy (gated by Authelia).
+# Binds to 127.0.0.1:7681 only. Each session runs either a login shell
+# (default) or Claude Code if `claude` is installed (09-claude-code).
 #
-# Runs as the admin user via systemd so the PTY inherits the admin's $HOME,
-# PATH, and access to claude / claude-session. No container — keeps the
-# stack of moving parts small.
+# Runs as the admin user via systemd so the PTY inherits the admin's $HOME
+# and PATH. No container — keeps the moving parts small.
 #
 # No-op if PRIMARY_DOMAIN is unset (no public surface to attach to).
 set -euo pipefail
@@ -19,10 +19,14 @@ if [ -z "${PRIMARY_DOMAIN:-}" ]; then
 fi
 
 # Optional component: the browser terminal can be deselected at bootstrap.
-INSTALL_CLAUDE="${INSTALL_CLAUDE:-true}"
-if [ "${INSTALL_CLAUDE}" != "true" ]; then
-  log INFO "INSTALL_CLAUDE=${INSTALL_CLAUDE}; skipping the ttyd web terminal"
-  systemctl disable --now ttyd-claude.service 2>/dev/null || true
+INSTALL_SESSIONS="${INSTALL_SESSIONS:-true}"
+if [ "${INSTALL_SESSIONS}" != "true" ]; then
+  log INFO "INSTALL_SESSIONS=${INSTALL_SESSIONS}; skipping the ttyd web terminal"
+  systemctl disable --now ttyd-sessions.service 2>/dev/null || true
+  # Migration: also clear any pre-rename unit from earlier versions.
+  systemctl disable --now ttyd-claude.service   2>/dev/null || true
+  rm -f /etc/systemd/system/ttyd-sessions.service /etc/systemd/system/ttyd-claude.service
+  systemctl daemon-reload 2>/dev/null || true
   exit 0
 fi
 
@@ -36,8 +40,8 @@ ADMIN_HOME="$(getent passwd "${ADMIN}" | cut -d: -f6)"
 [ -n "${ADMIN_HOME}" ] || die "cannot resolve home for ${ADMIN}"
 
 # Install ttyd + tmux from Ubuntu universe. tmux is what makes the browser
-# sessions persistent: claude-session runs Claude inside it, so a refresh or
-# a dropped connection never kills a session.
+# sessions persistent: the session helper runs commands inside it, so a
+# refresh or a dropped connection never kills a session.
 apt_ensure ttyd tmux
 
 # Ubuntu's ttyd package ships /usr/lib/systemd/system/ttyd.service which is
@@ -48,25 +52,38 @@ if systemctl list-unit-files ttyd.service >/dev/null 2>&1; then
   systemctl stop    ttyd.service 2>/dev/null || true
   systemctl disable ttyd.service 2>/dev/null || true
   systemctl mask    ttyd.service 2>/dev/null || true
-  log INFO "default ttyd.service stopped + masked (replaced by ttyd-claude.service)"
+  log INFO "default ttyd.service stopped + masked (replaced by ttyd-sessions.service)"
 fi
 
-# Sanity: claude-session helper should exist (09-claude-code installs it).
-# But on first bootstrap 07 runs BEFORE 09 — so it may not be there yet.
-# That's fine; the service will retry on Restart=on-failure once 09 lands it.
-if [ ! -x "${ADMIN_HOME}/.local/bin/claude-session" ]; then
-  log INFO "claude-session not yet present at ${ADMIN_HOME}/.local/bin/ — 09-claude-code installs it"
+# Migration: tear down the old ttyd-claude.service from before the rename.
+# We do this BEFORE the new unit lands so port 7681 is free.
+if systemctl list-unit-files ttyd-claude.service >/dev/null 2>&1 \
+   || [ -f /etc/systemd/system/ttyd-claude.service ]; then
+  systemctl stop    ttyd-claude.service 2>/dev/null || true
+  systemctl disable ttyd-claude.service 2>/dev/null || true
+  rm -f /etc/systemd/system/ttyd-claude.service
+  systemctl daemon-reload 2>/dev/null || true
+  log INFO "removed legacy ttyd-claude.service (renamed to ttyd-sessions.service)"
 fi
+
+# Install the session helper that ttyd runs in the browser terminal. It
+# attaches to (or creates) per-user, per-name, workspace-confined tmux
+# sessions running either a shell or claude — see platform/ttyd/session.
+HELPER_SRC="${INFRA_ROOT}/platform/ttyd/session"
+HELPER="${ADMIN_HOME}/.local/bin/session"
+[ -f "${HELPER_SRC}" ] || die "missing ${HELPER_SRC}"
+install -d -o "${ADMIN}" -g "${ADMIN}" "${ADMIN_HOME}/.local/bin"
+install -m 755 -o "${ADMIN}" -g "${ADMIN}" "${HELPER_SRC}" "${HELPER}"
+log INFO "installed session helper for ${ADMIN} (from ${HELPER_SRC})"
+# Clean up the old helper name if present, so the admin's PATH only sees the
+# new command.
+rm -f "${ADMIN_HOME}/.local/bin/claude-session"
 
 # Resolve WORKSPACE_ROOT: the directory tree that holds the projects browser
-# Claude sessions may open in. Every session is confined to this tree — it
-# can never run in $HOME or above the workspace root. Defaults to
-# ~/workspace; an explicit value in .env is used as-is. Persisted to .env so
-# re-runs and disaster-recovery runs stay non-interactive.
-#
-# CLAUDE_WORKDIR — the single fixed directory used before per-session
-# directories existed — is obsolete. Any existing value is left untouched in
-# .env and simply ignored.
+# sessions may open in. Every session is confined to this tree — it can
+# never run in $HOME or above the workspace root. Defaults to ~/workspace;
+# an explicit value in .env is used as-is. Persisted to .env so re-runs and
+# disaster-recovery runs stay non-interactive.
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-${ADMIN_HOME}/workspace}"
 # A value read from .env gets no tilde expansion; expand a leading ~ and
 # resolve a still-relative value against the admin home.
@@ -91,15 +108,22 @@ fi
 
 # Per-user tmux sockets live here — one socket per Authelia user, so each
 # user only ever sees their own sessions. 0700 so the sockets are not even
-# listable by other accounts. claude-session and the session-manager API
-# both derive this path the same way (~/.claude-sessions).
-SOCKET_DIR="${ADMIN_HOME}/.claude-sessions"
+# listable by other accounts. session and the session-manager API both
+# derive this path the same way (~/.terminal-sessions).
+SOCKET_DIR="${ADMIN_HOME}/.terminal-sessions"
 install -d -m 700 -o "${ADMIN}" -g "${ADMIN}" "${SOCKET_DIR}"
 log INFO "per-user session socket dir ${SOCKET_DIR} ready"
 
+# Migration: drop the old socket dir if it still exists. tmux servers are
+# stopped above when ttyd-claude was disabled, so the .sock files are stale.
+if [ -d "${ADMIN_HOME}/.claude-sessions" ]; then
+  rm -rf -- "${ADMIN_HOME}/.claude-sessions"
+  log INFO "removed legacy socket dir ${ADMIN_HOME}/.claude-sessions"
+fi
+
 # Render the systemd unit.
-TEMPLATE="${INFRA_ROOT}/platform/ttyd/ttyd-claude.service.template"
-UNIT=/etc/systemd/system/ttyd-claude.service
+TEMPLATE="${INFRA_ROOT}/platform/ttyd/ttyd-sessions.service.template"
+UNIT=/etc/systemd/system/ttyd-sessions.service
 [ -f "${TEMPLATE}" ] || die "missing ${TEMPLATE}"
 
 python3 - "${TEMPLATE}" "${UNIT}" "${ADMIN}" "${ADMIN_HOME}" \
@@ -118,11 +142,9 @@ chmod 644 "${UNIT}"
 log INFO "rendered ${UNIT} (user=${ADMIN}, workspace=${WORKSPACE_ROOT})"
 
 systemctl daemon-reload
-systemctl enable ttyd-claude.service >/dev/null 2>&1 || true
-systemctl restart ttyd-claude.service
-# Give it a moment; restart=on-failure handles the case where claude-session
-# isn't installed yet (first bootstrap, before step 09).
+systemctl enable ttyd-sessions.service >/dev/null 2>&1 || true
+systemctl restart ttyd-sessions.service
 sleep 1
-systemctl is-active --quiet ttyd-claude.service || \
-  log WARN "ttyd-claude not yet active (likely waiting for 09-claude-code to install claude-session); will retry on restart"
-log INFO "ttyd-claude unit installed; reachable via ${SUBDOMAIN_CLAUDE:-claude}.${PRIMARY_DOMAIN} after 09-claude-code lands"
+systemctl is-active --quiet ttyd-sessions.service || \
+  log WARN "ttyd-sessions not yet active; check journalctl -u ttyd-sessions.service"
+log INFO "ttyd-sessions unit installed; reachable via ${SUBDOMAIN_SESSIONS:-sessions}.${PRIMARY_DOMAIN}"

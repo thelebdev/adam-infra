@@ -6,20 +6,35 @@ CHANGELOG when delivered.
 
 ## Recently delivered
 
+### Generic browser terminal sessions (shell or Claude)
+
+The browser terminal stack is now command-agnostic. The subdomain moves
+from `claude.<domain>` to `sessions.<domain>`; each session runs either a
+login shell (default) or Claude Code (opt-in via the dashboard form or
+helper menu). `INSTALL_CLAUDE` splits into `INSTALL_SESSIONS` (the ttyd +
+tmux + dashboard panel) and `INSTALL_CLAUDE` (the `claude` binary), so you
+can have terminal sessions without Claude, or the binary without the
+browser panel. The helper renames `claude-session` → `session`; the
+per-session command is recorded in a marker file so resume always re-opens
+into the same command. Systemd unit renames (`ttyd-claude.service` →
+`ttyd-sessions.service`) and env var renames (`CLAUDE_*` → `SESSION_*`)
+ride along. Tests extend with allowlist + marker coverage; 07-ttyd
+migrates the old unit/socket dir on re-run.
+
 ### Persistent, multi-session, per-user browser Claude
 
-ttyd now serves named, tmux-backed Claude Code sessions through the
-`claude-session` helper. A session survives a browser refresh, a logoff, or a
-dropped connection; `claude.<domain>/?arg=<name>` gives each browser tab its
-own independent Claude. Each Authelia user gets a private set of sessions —
-a per-user tmux socket keyed off `$TTYD_USER` (ttyd `-H Remote-User`). New
-sessions are confined to `WORKSPACE_ROOT`; they can never run in `$HOME` or
-above it. The dashboard gained a live **Claude sessions** section (list /
-open / start / stop) backed by the new `session-manager` service
-(`11-session-manager.sh`). Caddy was hardened against the `forward_auth`
-identity-header spoof (CVE-2026-30851). Session-level isolation only — all
-sessions still run as the one admin OS account; OS-level isolation (per-user
-Linux accounts) remains a possible future step.
+ttyd serves named, tmux-backed sessions through the session helper. A
+session survives a browser refresh, a logoff, or a dropped connection;
+`sessions.<domain>/?arg=<name>` gives each browser tab its own independent
+session. Each Authelia user gets a private set — a per-user tmux socket
+keyed off `$TTYD_USER` (ttyd `-H Remote-User`). New sessions are confined
+to `WORKSPACE_ROOT`; they can never run in `$HOME` or above it. The
+dashboard has a live **Terminal sessions** section (list / open / start /
+stop) backed by the `session-manager` service (`11-session-manager.sh`).
+Caddy was hardened against the `forward_auth` identity-header spoof
+(CVE-2026-30851). Session-level isolation only — all sessions still run as
+the one admin OS account; OS-level isolation (per-user Linux accounts)
+remains a possible future step.
 
 ### Platform dashboard + configurable Claude working directory
 
@@ -30,13 +45,13 @@ Claude session opens in a working directory chosen at bootstrap
 be added with `platform/authelia/add-user.sh`; `users_database.yml` is now
 rendered once so they survive bootstrap re-runs.
 
-### Better secure-access mechanism — Authelia SSO + TOTP, ttyd for Claude in browser
+### Better secure-access mechanism — Authelia SSO + TOTP, ttyd for sessions in browser
 
 Replaced public-SSH-with-basic-auth-on-dashboards with Authelia (single
 sign-on, password + TOTP) gating every subdomain under PRIMARY_DOMAIN.
-Added ttyd serving Claude Code in a browser tab at claude.<domain>, so the
-agent is reachable from any device with a browser — phone, work laptop,
-anywhere — without an SSH client.
+Added ttyd serving browser terminal sessions at sessions.<domain> (formerly
+claude.<domain>), so the agent — or a plain shell — is reachable from any
+device with a browser, without an SSH client.
 
 ## Near term
 

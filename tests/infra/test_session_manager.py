@@ -110,9 +110,17 @@ class TmuxTests(WorkspaceTestCase):
     def setUp(self) -> None:
         super().setUp()
         self._orig_run = server._run
+        self._orig_sockets = server.SOCKET_DIR
+        # Steer marker writes to the throwaway workspace, not the dev home.
+        server.SOCKET_DIR = self.root / ".sockets"
+        server.SOCKET_DIR.mkdir(parents=True, exist_ok=True)
+        self._orig_claude = server.claude_installed
+        server.claude_installed = lambda: True
 
     def tearDown(self) -> None:
         server._run = self._orig_run
+        server.SOCKET_DIR = self._orig_sockets
+        server.claude_installed = self._orig_claude
         super().tearDown()
 
     def test_socket_path_is_per_user(self) -> None:
@@ -126,7 +134,9 @@ class TmuxTests(WorkspaceTestCase):
         server._run = fake_run(returncode=1, stderr="no server running")
         self.assertEqual(server.list_sessions("alice"), [])
 
-    def test_list_parses_a_session(self) -> None:
+    def test_list_parses_a_session_with_cmd(self) -> None:
+        # The marker says claude — list_sessions should surface it.
+        server.write_marker("alice", "api", "claude")
         line = server.SEP.join(["api", "2", "1", "100", "200", "/ws/api"])
         server._run = fake_run(stdout=line + "\n")
         out = server.list_sessions("alice")
@@ -135,12 +145,37 @@ class TmuxTests(WorkspaceTestCase):
         self.assertEqual(out[0]["windows"], 2)
         self.assertTrue(out[0]["attached"])
         self.assertEqual(out[0]["dir"], "/ws/api")
+        self.assertEqual(out[0]["cmd"], "claude")
+
+    def test_list_defaults_cmd_when_marker_missing(self) -> None:
+        line = server.SEP.join(["orphan", "1", "0", "100", "200", "/ws/x"])
+        server._run = fake_run(stdout=line + "\n")
+        out = server.list_sessions("alice")
+        self.assertEqual(out[0]["cmd"], server.CMD_DEFAULT)
 
     def test_create_rejects_bad_name(self) -> None:
         server._run = fake_run()
         with self.assertRaises(server.ApiError) as ctx:
             server.create_session("alice", "bad name", "")
         self.assertEqual(ctx.exception.status, 400)
+
+    def test_create_rejects_bad_cmd(self) -> None:
+        server._run = fake_run()
+        with self.assertRaises(server.ApiError) as ctx:
+            server.create_session("alice", "api", "", cmd="rm")
+        self.assertEqual(ctx.exception.status, 400)
+
+    def test_create_rejects_claude_when_missing(self) -> None:
+        server.claude_installed = lambda: False
+        server._run = fake_run()
+        with self.assertRaises(server.ApiError) as ctx:
+            server.create_session("alice", "api", "", cmd="claude")
+        self.assertEqual(ctx.exception.status, 400)
+
+    def test_create_writes_marker(self) -> None:
+        server._run = fake_run()
+        server.create_session("alice", "api", "", cmd="claude")
+        self.assertEqual(server.read_marker("alice", "api"), "claude")
 
     def test_create_reports_duplicate(self) -> None:
         server._run = fake_run(returncode=1, stderr="duplicate session: api")
@@ -159,6 +194,28 @@ class TmuxTests(WorkspaceTestCase):
         with self.assertRaises(server.ApiError) as ctx:
             server.kill_session("alice", "x")
         self.assertEqual(ctx.exception.status, 404)
+
+    def test_kill_clears_marker(self) -> None:
+        server.write_marker("alice", "api", "claude")
+        server._run = fake_run(returncode=0)
+        server.kill_session("alice", "api")
+        self.assertFalse(server._marker_path("alice", "api").exists())
+
+
+class CmdArgvTests(unittest.TestCase):
+    def test_shell_argv_has_login_flag(self) -> None:
+        argv = server.cmd_argv("shell")
+        self.assertEqual(len(argv), 2)
+        self.assertEqual(argv[1], "-l")
+        self.assertTrue(argv[0].startswith("/"))
+
+    def test_claude_argv(self) -> None:
+        self.assertEqual(server.cmd_argv("claude"), ["claude"])
+
+    def test_unknown_label_rejected(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            server.cmd_argv("ls")
+        self.assertEqual(ctx.exception.status, 400)
 
 
 class IdentityTests(unittest.TestCase):

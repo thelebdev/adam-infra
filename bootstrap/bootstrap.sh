@@ -29,7 +29,8 @@ select_components() {
     "INSTALL_GLANCES|Glances (host metrics)" \
     "INSTALL_DOZZLE|Dozzle (container logs)" \
     "INSTALL_NTOPNG|ntopng (network traffic, ~256 MB RAM)" \
-    "INSTALL_CLAUDE|Claude Code + browser terminal" \
+    "INSTALL_SESSIONS|Browser terminal sessions (shell + tmux + dashboard panel)" \
+    "INSTALL_CLAUDE|Claude Code binary (available as a session command)" \
     "INSTALL_DASHBOARD|platform dashboard landing page"
   do
     var="${entry%%|*}"
@@ -65,7 +66,7 @@ select_subdomains() {
   profile="${OBSERVABILITY_PROFILE:-lightweight}"
   local list=( "SUBDOMAIN_AUTH:auth:Authelia portal" )
   [ "${INSTALL_DASHBOARD:-true}" = "true" ] && list+=( "SUBDOMAIN_DASHBOARD:dashboard:platform dashboard" )
-  [ "${INSTALL_CLAUDE:-true}"    = "true" ] && list+=( "SUBDOMAIN_CLAUDE:claude:Claude browser terminal" )
+  [ "${INSTALL_SESSIONS:-true}"  = "true" ] && list+=( "SUBDOMAIN_SESSIONS:sessions:Browser terminal sessions" )
   if [ "${profile}" = "lightweight" ]; then
     [ "${INSTALL_DOZZLE:-true}"  = "true" ] && list+=( "SUBDOMAIN_DOZZLE:dozzle:Dozzle" )
     [ "${INSTALL_GLANCES:-true}" = "true" ] && list+=( "SUBDOMAIN_GLANCES:glances:Glances" )
@@ -80,7 +81,7 @@ select_subdomains() {
   [ "${pending}" -eq 1 ] || return 0
   ans=n
   if [ -t 0 ]; then
-    printf '  Customize subdomain names? Default is auth/claude/grafana/etc. [y/N]: ' >&2
+    printf '  Customize subdomain names? Default is auth/sessions/grafana/etc. [y/N]: ' >&2
     read -r ans || true
   fi
   for e in "${list[@]}"; do

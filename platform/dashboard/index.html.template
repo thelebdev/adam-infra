@@ -81,13 +81,14 @@
   /* sessions */
   .sessions { padding: 1.15rem 1.2rem 1.3rem; }
   .new-session { display: flex; gap: .55rem; flex-wrap: wrap; margin-bottom: 1rem; }
-  .new-session input {
+  .new-session input, .new-session select {
     flex: 1 1 200px; min-width: 0;
     background: var(--bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 8px;
     padding: .55rem .7rem; font-size: .9rem;
   }
-  .new-session input:focus {
+  .new-session select { flex: 0 1 140px; }
+  .new-session input:focus, .new-session select:focus {
     outline: none; border-color: var(--accent);
   }
   button, .btn {
@@ -169,7 +170,7 @@
   <!-- >>>sessions -->
   <section class="section">
     <div class="section-head">
-      <h2>Claude sessions</h2>
+      <h2>Terminal sessions</h2>
       <span class="hint">persistent &amp; per-user — survive a refresh, a logoff, or a dropped connection</span>
     </div>
     <div class="panel sessions">
@@ -180,6 +181,10 @@
         <input type="text" id="ns-dir" list="ws-dirs"
                placeholder="project directory (blank = workspace root)">
         <datalist id="ws-dirs"></datalist>
+        <select id="ns-cmd" title="What to run in the session">
+          <option value="shell" selected>Shell</option>
+          <option value="claude" id="ns-cmd-claude">Claude Code</option>
+        </select>
         <button type="submit">Start session</button>
       </form>
       <div class="banner" id="ns-error" hidden></div>
@@ -189,12 +194,14 @@
   <script>
   (function () {
     "use strict";
-    var CLAUDE_BASE = "__CLAUDE_BASE_URL__";
+    var SESSIONS_BASE = "__SESSIONS_BASE_URL__";
     var listEl = document.getElementById("ns-list");
     var errEl = document.getElementById("ns-error");
     var form = document.getElementById("ns-form");
     var nameEl = document.getElementById("ns-name");
     var dirEl = document.getElementById("ns-dir");
+    var cmdEl = document.getElementById("ns-cmd");
+    var cmdClaudeOpt = document.getElementById("ns-cmd-claude");
     var dirList = document.getElementById("ws-dirs");
     var timer = null;
 
@@ -228,18 +235,19 @@
     function render(sessions) {
       if (!sessions.length) {
         listEl.innerHTML = '<div class="pad muted">No sessions yet — '
-          + 'start one above. Each is an independent Claude Code instance.</div>';
+          + 'start one above. Each is an independent terminal session.</div>';
         return;
       }
       var head = '<div class="srow head"><div>Session</div><div>Directory</div>'
         + '<div>State</div><div></div></div>';
       var rows = sessions.map(function (s) {
-        var url = CLAUDE_BASE + "/?arg=" + encodeURIComponent(s.name);
+        var url = SESSIONS_BASE + "/?arg=" + encodeURIComponent(s.name);
         var badge = s.attached
           ? '<span class="badge live">attached</span>'
           : '<span class="badge idle">' + esc(rel(s.idle_seconds)) + '</span>';
+        var cmdBadge = '<span class="badge">' + esc(s.cmd || "shell") + '</span>';
         return '<div class="srow">'
-          + '<div class="scol-name">' + esc(s.name) + '</div>'
+          + '<div class="scol-name">' + esc(s.name) + ' ' + cmdBadge + '</div>'
           + '<div class="scol-dir" title="' + esc(s.dir) + '">' + esc(s.dir) + '</div>'
           + '<div>' + badge + ' <span class="muted">' + (s.windows || 1) + 'w</span></div>'
           + '<div class="scol-act">'
@@ -248,6 +256,15 @@
           + '</div></div>';
       });
       listEl.innerHTML = head + rows.join("");
+    }
+
+    function loadCapabilities() {
+      return api("GET", "/api/capabilities").then(function (d) {
+        if (cmdClaudeOpt && d && d.claude_installed === false) {
+          cmdClaudeOpt.disabled = true;
+          cmdClaudeOpt.textContent = "Claude Code (unavailable)";
+        }
+      }).catch(function () {});
     }
 
     function refresh() {
@@ -270,7 +287,7 @@
       var btn = ev.target.closest && ev.target.closest(".btn.stop");
       if (!btn) return;
       var name = btn.getAttribute("data-name");
-      if (!window.confirm('Stop "' + name + '"? Its Claude process ends.')) return;
+      if (!window.confirm('Stop "' + name + '"? Its process ends.')) return;
       btn.disabled = true;
       api("DELETE", "/api/sessions/" + encodeURIComponent(name))
         .then(refresh)
@@ -286,9 +303,14 @@
       if (!name) return;
       var submit = form.querySelector("button");
       submit.disabled = true;
-      api("POST", "/api/sessions", { name: name, dir: dirEl.value.trim() })
+      api("POST", "/api/sessions", {
+        name: name,
+        dir: dirEl.value.trim(),
+        cmd: (cmdEl && cmdEl.value) || "shell"
+      })
         .then(function () {
           nameEl.value = ""; dirEl.value = "";
+          if (cmdEl) cmdEl.value = "shell";
           return Promise.all([refresh(), loadDirs()]);
         })
         .catch(function (e) { showError("Could not start " + name + ": " + e.message); })
@@ -305,6 +327,7 @@
     });
     refresh();
     loadDirs();
+    loadCapabilities();
     start();
   })();
   </script>
@@ -313,7 +336,7 @@
   <section class="section">
     <div class="section-head"><h2>Tools</h2></div>
     <div class="grid">
-      __CLAUDE_CARD__
+      __SESSIONS_CARD__
       __DOZZLE_CARD__
       __GLANCES_CARD__
       __NTOPNG_CARD__
@@ -337,7 +360,7 @@
       <code>sudo /opt/infra/platform/authelia/add-user.sh &lt;username&gt;</code>
       <p style="margin-top:.7rem">
         The script sets the password, enrols a TOTP device, and prints the
-        enrolment QR. Each user gets their own private set of Claude sessions.
+        enrolment QR. Each user gets their own private set of terminal sessions.
       </p>
     </div>
   </section>

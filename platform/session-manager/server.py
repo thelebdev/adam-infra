@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Claude session-manager — JSON API behind the platform dashboard.
+"""session-manager — JSON API behind the platform dashboard.
 
-A tiny HTTP service that lets the dashboard's "Claude sessions" section list,
-create, and stop the per-user, tmux-backed Claude Code sessions that ttyd
-serves in the browser.
+A tiny HTTP service that lets the dashboard's "Terminal sessions" section
+list, create, and stop the per-user, tmux-backed browser terminal sessions
+that ttyd serves. Each session runs one of an allowlisted set of commands
+(a login shell by default; Claude Code if installed).
 
 It is reached only via Caddy at ``<dashboard-host>/api/*``. Caddy gates that
 route with Authelia and forwards the authenticated identity as the
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import pwd
 import re
 import subprocess
 import time
@@ -31,10 +33,10 @@ from urllib.parse import unquote
 
 # --- configuration (the systemd unit sets these; defaults cover dev use) ---
 HOME = Path(os.environ.get("HOME", str(Path.home())))
-WORKSPACE_ROOT = Path(os.environ.get("CLAUDE_WORKSPACE_ROOT", HOME / "workspace"))
-SOCKET_DIR = Path(os.environ.get("CLAUDE_SOCKET_DIR", HOME / ".claude-sessions"))
+WORKSPACE_ROOT = Path(os.environ.get("SESSION_WORKSPACE_ROOT", HOME / "workspace"))
+SOCKET_DIR = Path(os.environ.get("SESSION_SOCKET_DIR", HOME / ".terminal-sessions"))
 TMUX_CONF = Path(os.environ.get(
-    "CLAUDE_TMUX_CONF", "/opt/infra/platform/ttyd/claude-tmux.conf"))
+    "SESSION_TMUX_CONF", "/opt/infra/platform/ttyd/session-tmux.conf"))
 LISTEN_ADDR = os.environ.get("SM_LISTEN_ADDR", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("SM_LISTEN_PORT", "7682"))
 
@@ -47,6 +49,13 @@ USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,30}$")
 SEP = "\x1f"
 TMUX_TIMEOUT = 10
 MAX_BODY = 64 * 1024
+
+# Allowed command choices and the default. The allowlist is the safety
+# boundary for what a user can run inside a session — keep it tight.
+CMD_ALLOWLIST = ("shell", "claude")
+CMD_DEFAULT = "shell"
+SAFE_SHELLS = {"/bin/bash", "/usr/bin/bash", "/bin/zsh", "/usr/bin/zsh",
+               "/bin/sh", "/usr/bin/sh"}
 
 
 def log(level: str, msg: str, **fields: Any) -> None:
@@ -113,6 +122,77 @@ def workspace_dirs(limit: int = 200) -> list[str]:
     return found[:limit]
 
 
+# --- commands --------------------------------------------------------------
+
+def resolve_shell() -> str:
+    """The OS shell to run for a 'shell' session — the running account's
+    /etc/passwd shell if it's a familiar one, otherwise /bin/bash. The
+    service runs as a single OS account, so this is the same for everyone."""
+    try:
+        shell = pwd.getpwuid(os.geteuid()).pw_shell
+    except KeyError:
+        shell = ""
+    return shell if shell in SAFE_SHELLS else "/bin/bash"
+
+
+def cmd_argv(label: str) -> list[str]:
+    """Resolve a command label to the argv tmux should spawn. Raises
+    ApiError(400) for an unknown label — the allowlist is the boundary."""
+    if label == "shell":
+        return [resolve_shell(), "-l"]
+    if label == "claude":
+        return ["claude"]
+    raise ApiError(400, f"unknown command '{label}'")
+
+
+def claude_installed() -> bool:
+    """True if `claude` is on PATH for the service account — used to gate
+    the cmd-selector option in the dashboard."""
+    for p in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = Path(p) / "claude"
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return True
+    return False
+
+
+# --- marker files ----------------------------------------------------------
+# One file per session at SOCKET_DIR/<user>/<name>.cmd holding the label
+# ("shell" or "claude"). tmux itself doesn't expose what's running cleanly,
+# and the dashboard needs to render that — the marker is the source of truth.
+
+def _user_marker_dir(user: str) -> Path:
+    return SOCKET_DIR / user
+
+
+def _marker_path(user: str, name: str) -> Path:
+    return _user_marker_dir(user) / f"{name}.cmd"
+
+
+def write_marker(user: str, name: str, label: str) -> None:
+    d = _user_marker_dir(user)
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(d, 0o700)
+    except OSError:
+        pass
+    _marker_path(user, name).write_text(label + "\n")
+
+
+def read_marker(user: str, name: str) -> str:
+    try:
+        value = _marker_path(user, name).read_text().strip()
+    except OSError:
+        return CMD_DEFAULT
+    return value if value in CMD_ALLOWLIST else CMD_DEFAULT
+
+
+def clear_marker(user: str, name: str) -> None:
+    try:
+        _marker_path(user, name).unlink()
+    except OSError:
+        pass
+
+
 # --- tmux -----------------------------------------------------------------
 
 def _tmux_base(user: str) -> list[str]:
@@ -160,24 +240,35 @@ def list_sessions(user: str) -> list[dict[str, Any]]:
             "activity": activity_i,
             "idle_seconds": max(0, now - activity_i),
             "dir": path,
+            "cmd": read_marker(user, name),
         })
     sessions.sort(key=lambda s: s["name"])
     return sessions
 
 
-def create_session(user: str, name: str, req_dir: str) -> None:
-    """Create a detached session running `claude` in a confined directory."""
+def create_session(user: str, name: str, req_dir: str,
+                   cmd: str = CMD_DEFAULT) -> None:
+    """Create a detached session running `cmd` in a confined directory.
+    Writes a marker file so list/resume agree on what's running."""
     if not NAME_RE.match(name):
         raise ApiError(400, "invalid session name "
                             "(letters, digits, _ and -, max 32)")
+    if cmd not in CMD_ALLOWLIST:
+        raise ApiError(400, f"invalid command '{cmd}' "
+                            f"(allowed: {', '.join(CMD_ALLOWLIST)})")
+    if cmd == "claude" and not claude_installed():
+        raise ApiError(400, "claude is not installed on this server")
     target = confine_dir(req_dir)
     try:
         target.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise ApiError(500, f"cannot create {target}") from exc
+    write_marker(user, name, cmd)
+    argv = cmd_argv(cmd)
     res = _run(_tmux_base(user) + ["new-session", "-d", "-s", name,
-                                   "-c", str(target), "claude"])
+                                   "-c", str(target), "--", *argv])
     if res.returncode != 0:
+        clear_marker(user, name)
         stderr = res.stderr.strip()
         if "duplicate" in stderr.lower():
             raise ApiError(409, f"session '{name}' already exists")
@@ -185,7 +276,7 @@ def create_session(user: str, name: str, req_dir: str) -> None:
 
 
 def kill_session(user: str, name: str) -> None:
-    """Stop a session (and the Claude process inside it)."""
+    """Stop a session (and the process inside it)."""
     if not NAME_RE.match(name):
         raise ApiError(400, "invalid session name")
     res = _run(_tmux_base(user) + ["kill-session", "-t", f"={name}"])
@@ -194,6 +285,7 @@ def kill_session(user: str, name: str) -> None:
         if "can't find" in stderr.lower() or "no such" in stderr.lower():
             raise ApiError(404, f"no session '{name}'")
         raise ApiError(500, stderr or "failed to stop session")
+    clear_marker(user, name)
 
 
 # --- HTTP -----------------------------------------------------------------
@@ -250,6 +342,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/health":
                 self._send_json(200, {"status": "ok"})
                 return
+            if method == "GET" and path == "/api/capabilities":
+                # Unauthenticated: tells the dashboard which cmd options to
+                # show. No user-specific data, only server-side feature flags.
+                self._send_json(200, {
+                    "commands": list(CMD_ALLOWLIST),
+                    "claude_installed": claude_installed(),
+                })
+                return
             user = self._identity()
             if method == "GET" and path == "/api/sessions":
                 self._send_json(200, {"user": user,
@@ -260,9 +360,11 @@ class Handler(BaseHTTPRequestHandler):
             elif method == "POST" and path == "/api/sessions":
                 body = self._read_json()
                 name = str(body.get("name", "")).strip()
-                create_session(user, name, str(body.get("dir", "")).strip())
-                log("info", "session created", user=user, session=name)
-                self._send_json(201, {"ok": True, "name": name})
+                cmd = str(body.get("cmd", CMD_DEFAULT)).strip() or CMD_DEFAULT
+                create_session(user, name,
+                               str(body.get("dir", "")).strip(), cmd)
+                log("info", "session created", user=user, session=name, cmd=cmd)
+                self._send_json(201, {"ok": True, "name": name, "cmd": cmd})
             elif method == "DELETE" and path.startswith("/api/sessions/"):
                 name = unquote(path[len("/api/sessions/"):])
                 kill_session(user, name)
@@ -293,7 +395,7 @@ def main() -> None:
     server = ThreadingHTTPServer((LISTEN_ADDR, LISTEN_PORT), Handler)
     log("info", "session-manager listening", addr=LISTEN_ADDR,
         port=LISTEN_PORT, workspace=str(WORKSPACE_ROOT),
-        sockets=str(SOCKET_DIR))
+        sockets=str(SOCKET_DIR), claude_installed=claude_installed())
     try:
         server.serve_forever()
     except KeyboardInterrupt:

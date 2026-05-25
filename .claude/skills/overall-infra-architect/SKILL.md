@@ -150,9 +150,10 @@ debate.
 ## Stack context (current state)
 
 - **Baseline (every VPS):** public SSH (key-only, UFW rate-limited,
-  fail2ban), Docker + Compose v2, Caddy reverse proxy (TLS + basic auth in
-  front of dashboards), Claude Code on the host with a `claude-session`
-  tmux helper, tiered observability.
+  fail2ban), Docker + Compose v2, Caddy reverse proxy (TLS + Authelia SSO
+  in front of dashboards), browser terminal sessions (ttyd + tmux + the
+  `session` helper) at `sessions.<domain>`, Claude Code optionally
+  installed as a session command, tiered observability.
 - **Observability profiles (`OBSERVABILITY_PROFILE`):** `lightweight` =
   Glances + Dozzle + ntopng (fits ~1 GiB); `full` = Loki + Promtail +
   Prometheus + node-exporter + Grafana (>= 2 GiB). All UIs bind to

@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# 07 - Claude Code on the host (remote-management agent).
-# Installed for the admin user. Idempotent. Auth is a deliberate manual step:
-# either `claude login` over the SSH session, or ANTHROPIC_API_KEY from .env
+# 09 - Claude Code on the host (remote-management agent).
+# Installs the `claude` binary for the admin user so it can be selected as
+# the command for a browser terminal session (07-ttyd) and used directly
+# over SSH. Idempotent. Auth is a deliberate manual step: either
+# `claude login` over the SSH session, or ANTHROPIC_API_KEY from .env
 # exported in the admin shell.
+#
+# INSTALL_CLAUDE is independent of INSTALL_SESSIONS — you can have the
+# binary without the browser terminal (SSH-only use), and you can have the
+# browser terminal without the binary (shell-only sessions).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/common.sh"
 require_root
 
-# Optional component: Claude Code on the host can be deselected at bootstrap.
 INSTALL_CLAUDE="${INSTALL_CLAUDE:-true}"
 if [ "${INSTALL_CLAUDE}" != "true" ]; then
   log INFO "INSTALL_CLAUDE=${INSTALL_CLAUDE}; skipping Claude Code install"
@@ -39,16 +44,6 @@ for rc in "${ADMIN_HOME}/.profile" "${ADMIN_HOME}/.bashrc"; do
   chown "${ADMIN}:${ADMIN}" "${rc}" 2>/dev/null || true
 done
 
-# Install the session helper that ttyd runs in the browser terminal. It
-# attaches to (or creates) per-user, per-name, workspace-confined Claude
-# sessions in tmux — see platform/ttyd/claude-session for the full design.
-HELPER_SRC="${INFRA_ROOT}/platform/ttyd/claude-session"
-HELPER="${ADMIN_HOME}/.local/bin/claude-session"
-[ -f "${HELPER_SRC}" ] || die "missing ${HELPER_SRC}"
-install -d -o "${ADMIN}" -g "${ADMIN}" "${ADMIN_HOME}/.local/bin"
-install -m 755 -o "${ADMIN}" -g "${ADMIN}" "${HELPER_SRC}" "${HELPER}"
-log INFO "installed claude-session helper for ${ADMIN} (from ${HELPER_SRC})"
-
 # Make the API key available to the admin shell only if provided (never logged).
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   ENVLINE='export ANTHROPIC_API_KEY="$(grep -m1 "^ANTHROPIC_API_KEY=" '"${INFRA_ENV_FILE}"' | cut -d= -f2-)"'
@@ -56,6 +51,16 @@ if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   log INFO "ANTHROPIC_API_KEY wired into ${ADMIN} shell from .env"
 else
   log WARN "ANTHROPIC_API_KEY not set; run 'claude login' over SSH to authenticate"
+fi
+
+# If ttyd-sessions is already up, kick it so the session-manager + ttyd see
+# the freshly-installed claude binary on the next session spawn. Harmless
+# if the unit doesn't exist yet.
+if systemctl is-active --quiet ttyd-sessions.service 2>/dev/null; then
+  systemctl restart ttyd-sessions.service 2>/dev/null || true
+fi
+if systemctl is-active --quiet session-manager.service 2>/dev/null; then
+  systemctl restart session-manager.service 2>/dev/null || true
 fi
 
 VER="$(sudo -u "${ADMIN}" bash -lc 'claude --version' 2>/dev/null || echo unknown)"

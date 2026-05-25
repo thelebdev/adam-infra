@@ -8,6 +8,24 @@ Each entry: date, mode (Maintain / Manage / Create), one-line summary.
 
 ## Entries
 
+- **2026-05-25** — Maintain — The browser terminal stack is now
+  **command-agnostic**: each session runs either a login shell (default) or
+  Claude Code. The subdomain moves from `claude.<domain>` to
+  `sessions.<domain>` (old subdomain dropped, no redirect). `INSTALL_CLAUDE`
+  splits into two independent flags: `INSTALL_SESSIONS` (the ttyd + tmux +
+  dashboard panel) and `INSTALL_CLAUDE` (the `claude` binary). The helper
+  renames `claude-session` → `session` and accepts the chosen command via a
+  per-session marker file written by the session-manager API; resume reads
+  the marker so the dashboard, listing, and tmux all agree on what's
+  running. systemd units rename `ttyd-claude.service` →
+  `ttyd-sessions.service`; env vars rename `CLAUDE_WORKSPACE_ROOT/SOCKET_DIR/
+  TMUX_CONF` → `SESSION_*`; the per-user socket dir moves from
+  `~/.claude-sessions` to `~/.terminal-sessions`. 07-ttyd takes over
+  installing the session helper from 09-claude-code (so the browser
+  terminal works without the Claude binary). Migration is built into
+  07-ttyd: it stops/disables the old unit and cleans up the old socket dir
+  on re-run. Tests extend the existing suite with command-allowlist,
+  marker round-trip, and shell-vs-claude argv coverage.
 - **2026-05-23** — Create — The browser Claude terminal is now
   **multi-session and per-user**. ttyd runs the new `claude-session` helper,
   which attaches to (or creates) named, tmux-backed sessions: a browser

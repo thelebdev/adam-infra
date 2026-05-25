@@ -1,29 +1,30 @@
-# systemd unit template for ttyd serving per-user Claude Code sessions.
-# Rendered to /etc/systemd/system/ttyd-claude.service by bootstrap/07-ttyd.sh,
+# systemd unit template for ttyd serving per-user browser terminal sessions.
+# Rendered to /etc/systemd/system/ttyd-sessions.service by bootstrap/07-ttyd.sh,
 # with __ADMIN_USER__, __ADMIN_HOME__, __WORKSPACE_ROOT__, __SOCKET_DIR__ and
 # __INFRA_ROOT__ substituted.
 #
 # Bound to 127.0.0.1:7681 only, never directly exposed. Caddy serves
-# claude.<PRIMARY_DOMAIN>, gated by Authelia, reverse-proxying to this port.
+# sessions.<PRIMARY_DOMAIN>, gated by Authelia, reverse-proxying to this port.
 #
 # ttyd flags:
 #   -p / -i   bind localhost:7681 only
 #   -W        writable — let the browser send keystrokes
 #   -a        url-arg — the browser URL ?arg=<name> selects the tmux session,
-#             so each browser tab is an independent Claude Code instance
+#             so each browser tab is an independent terminal session
 #   -H Remote-User
 #             trust the Authelia identity Caddy forwards. ttyd refuses any
 #             connection without this header (fail-closed) and exposes its
-#             value to the spawned command as $TTYD_USER, which claude-session
-#             uses to give every user their own private set of sessions
+#             value to the spawned command as $TTYD_USER, which the session
+#             helper uses to give every user their own private set of sessions
 #   -t scrollback=...
 #             browser-terminal scrollback buffer size
 #
-# The spawned command is claude-session, which attaches to (or creates) a
-# tmux-backed Claude session — see platform/ttyd/claude-session.
+# The spawned command is the `session` helper, which attaches to (or creates)
+# a tmux-backed session running either a login shell or Claude Code — see
+# platform/ttyd/session.
 
 [Unit]
-Description=ttyd web terminal serving per-user Claude Code sessions
+Description=ttyd web terminal serving per-user browser terminal sessions
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -33,16 +34,16 @@ User=__ADMIN_USER__
 Group=__ADMIN_USER__
 Environment=HOME=__ADMIN_HOME__
 Environment=PATH=__ADMIN_HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=CLAUDE_WORKSPACE_ROOT=__WORKSPACE_ROOT__
-Environment=CLAUDE_SOCKET_DIR=__SOCKET_DIR__
-Environment=CLAUDE_TMUX_CONF=__INFRA_ROOT__/platform/ttyd/claude-tmux.conf
+Environment=SESSION_WORKSPACE_ROOT=__WORKSPACE_ROOT__
+Environment=SESSION_SOCKET_DIR=__SOCKET_DIR__
+Environment=SESSION_TMUX_CONF=__INFRA_ROOT__/platform/ttyd/session-tmux.conf
 WorkingDirectory=__WORKSPACE_ROOT__
-ExecStart=/usr/bin/ttyd -p 7681 -i 127.0.0.1 -W -a -H Remote-User -t scrollback=10000 __ADMIN_HOME__/.local/bin/claude-session
+ExecStart=/usr/bin/ttyd -p 7681 -i 127.0.0.1 -W -a -H Remote-User -t scrollback=10000 __ADMIN_HOME__/.local/bin/session
 Restart=on-failure
 RestartSec=3
 # KillMode=process: on stop/restart systemd kills only ttyd itself, never the
-# tmux servers behind it — so running Claude sessions survive a service
-# restart or a bootstrap re-run.
+# tmux servers behind it — so running sessions survive a service restart or
+# a bootstrap re-run.
 KillMode=process
 # Light sandboxing.
 NoNewPrivileges=true

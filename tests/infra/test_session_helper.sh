@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Unit tests for platform/ttyd/claude-session.
+# Unit tests for platform/ttyd/session.
 #
-# Sources the helper in library mode (CLAUDE_SESSION_LIB=1) so its pure
+# Sources the helper in library mode (SESSION_LIB=1) so its pure
 # functions can be exercised without tmux or claude. No VPS, no network.
 # The directory-confinement tests need GNU `realpath -m` (Ubuntu, the deploy
 # target) and are skipped — not failed — elsewhere.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HELPER="${HERE}/../../platform/ttyd/claude-session"
+HELPER="${HERE}/../../platform/ttyd/session"
 
 pass=0; fail=0; skip=0
 ok()  { pass=$((pass + 1)); printf '  ok    %s\n' "$1"; }
@@ -19,11 +19,13 @@ nope() { if "$@" >/dev/null 2>&1; then no "unexpectedly ok: $*"; else ok "reject
 [ -f "$HELPER" ] || { echo "missing $HELPER"; exit 1; }
 
 WS="$(mktemp -d)"
-trap 'rm -rf "$WS"' EXIT
+SOCK="$(mktemp -d)"
+trap 'rm -rf "$WS" "$SOCK"' EXIT
 mkdir -p "$WS/proj-a" "$WS/proj-b/sub"
 
-export CLAUDE_WORKSPACE_ROOT="$WS"
-export CLAUDE_SESSION_LIB=1
+export SESSION_WORKSPACE_ROOT="$WS"
+export SESSION_SOCKET_DIR="$SOCK"
+export SESSION_LIB=1
 # shellcheck disable=SC1090
 . "$HELPER"
 set +eu   # the helper enables `set -eu`; assertions must not abort the run.
@@ -45,6 +47,19 @@ nope valid_user Admin
 nope valid_user ""
 nope valid_user 1user
 
+echo "valid_cmd:"
+yes  valid_cmd shell
+yes  valid_cmd claude
+nope valid_cmd ""
+nope valid_cmd "bash"
+nope valid_cmd "rm"
+nope valid_cmd "shell;evil"
+
+echo "resolve_cmd_argv:"
+eq "shell argv has 2 lines"  "2"      "$(resolve_cmd_argv shell | wc -l | tr -d ' ')"
+eq "claude argv is 'claude'" "claude" "$(resolve_cmd_argv claude)"
+nope resolve_cmd_argv bogus
+
 echo "confine_dir:"
 if realpath -m / >/dev/null 2>&1; then
   eq "root itself"     "$(realpath -m "$WS")"            "$(confine_dir '')"
@@ -60,13 +75,28 @@ else
   skp "confine_dir tests (need GNU realpath -m; this host is not Linux)"
 fi
 
+echo "markers:"
+USER_ID="alice"
+write_marker "foo" "claude"
+eq "marker round-trip claude" "claude" "$(read_marker foo)"
+write_marker "bar" "shell"
+eq "marker round-trip shell"  "shell"  "$(read_marker bar)"
+eq "default when missing"     "shell"  "$(read_marker nonexistent)"
+clear_marker "foo"
+eq "cleared marker → default" "shell"  "$(read_marker foo)"
+
 echo "open_session (dry-run):"
-export CLAUDE_SESSION_DRYRUN=1
+export SESSION_DRYRUN=1
 tm() { return 1; }   # stub: session does not exist
-eq "creates when absent"  "CREATE foo $WS/foo" "$(open_session foo "$WS/foo")"
+eq "creates when absent (shell default)" \
+   "CREATE foo $WS/foo shell" "$(open_session foo "$WS/foo")"
+eq "creates when absent (claude explicit)" \
+   "CREATE bar $WS/bar claude" "$(open_session bar "$WS/bar" claude)"
+eq "bad cmd falls back to default" \
+   "CREATE baz $WS/baz shell" "$(open_session baz "$WS/baz" bogus)"
 tm() { return 0; }   # stub: session exists
 eq "attaches when present" "ATTACH foo"        "$(open_session foo)"
 
 echo
-printf 'claude-session: %d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
+printf 'session helper: %d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
 [ "$fail" -eq 0 ]

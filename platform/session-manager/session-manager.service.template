@@ -1,4 +1,4 @@
-# systemd unit template for the Claude session-manager API.
+# systemd unit template for the session-manager API.
 # Rendered to /etc/systemd/system/session-manager.service by
 # bootstrap/11-session-manager.sh, with __ADMIN_USER__, __ADMIN_HOME__,
 # __WORKSPACE_ROOT__, __SOCKET_DIR__ and __INFRA_ROOT__ substituted.
@@ -9,7 +9,7 @@
 # account's tmux sockets and can find `tmux` and `claude` on PATH.
 
 [Unit]
-Description=Claude session-manager API (dashboard backend for tmux sessions)
+Description=session-manager API (dashboard backend for tmux-backed terminal sessions)
 After=network-online.target
 Wants=network-online.target
 
@@ -19,9 +19,9 @@ User=__ADMIN_USER__
 Group=__ADMIN_USER__
 Environment=HOME=__ADMIN_HOME__
 Environment=PATH=__ADMIN_HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=CLAUDE_WORKSPACE_ROOT=__WORKSPACE_ROOT__
-Environment=CLAUDE_SOCKET_DIR=__SOCKET_DIR__
-Environment=CLAUDE_TMUX_CONF=__INFRA_ROOT__/platform/ttyd/claude-tmux.conf
+Environment=SESSION_WORKSPACE_ROOT=__WORKSPACE_ROOT__
+Environment=SESSION_SOCKET_DIR=__SOCKET_DIR__
+Environment=SESSION_TMUX_CONF=__INFRA_ROOT__/platform/ttyd/session-tmux.conf
 Environment=SM_LISTEN_ADDR=127.0.0.1
 Environment=SM_LISTEN_PORT=7682
 WorkingDirectory=__WORKSPACE_ROOT__
@@ -30,9 +30,9 @@ Restart=on-failure
 RestartSec=3
 # KillMode=process: on stop/restart systemd kills only this service's main
 # process — never the tmux servers it (or ttyd) spawned. That is what lets
-# running Claude sessions survive a service restart or a bootstrap re-run.
+# running sessions survive a service restart or a bootstrap re-run.
 KillMode=process
-# Light sandboxing — mirrors ttyd-claude.service. The tmux sockets and the
+# Light sandboxing — mirrors ttyd-sessions.service. The tmux sockets and the
 # workspace both live under the admin home, so ReadWritePaths covers them.
 NoNewPrivileges=true
 PrivateTmp=true

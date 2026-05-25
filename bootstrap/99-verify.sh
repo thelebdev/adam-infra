@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 require_root
 load_env
 
+INSTALL_SESSIONS="${INSTALL_SESSIONS:-true}"
 INSTALL_CLAUDE="${INSTALL_CLAUDE:-true}"
 INSTALL_DASHBOARD="${INSTALL_DASHBOARD:-true}"
 INSTALL_GLANCES="${INSTALL_GLANCES:-true}"
@@ -27,13 +28,13 @@ if [ -n "${PRIMARY_DOMAIN:-}" ]; then
   check "authelia container running" 'docker ps --format "{{.Names}}" | grep -qx authelia'
   check "authelia health endpoint"   'curl -sf http://127.0.0.1:9091/api/health'
   check "caddy container running"    'docker ps --format "{{.Names}}" | grep -qx caddy'
-  if [ "${INSTALL_CLAUDE}" = "true" ]; then
-    check "ttyd-claude service active" 'systemctl is-active --quiet ttyd-claude.service'
+  if [ "${INSTALL_SESSIONS}" = "true" ]; then
+    check "ttyd-sessions service active" 'systemctl is-active --quiet ttyd-sessions.service'
   fi
   if [ "${INSTALL_DASHBOARD}" = "true" ]; then
     check "dashboard page rendered"    'test -f "${INFRA_ROOT}/platform/dashboard/index.html"'
   fi
-  if [ "${INSTALL_CLAUDE}" = "true" ] && [ "${INSTALL_DASHBOARD}" = "true" ]; then
+  if [ "${INSTALL_SESSIONS}" = "true" ] && [ "${INSTALL_DASHBOARD}" = "true" ]; then
     check "session-manager service active" 'systemctl is-active --quiet session-manager.service'
     check "session-manager API healthy"    'curl -sf http://127.0.0.1:7682/api/health'
   fi

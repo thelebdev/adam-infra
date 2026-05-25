@@ -1,38 +1,41 @@
 #!/usr/bin/env bash
-# claude-session — per-user, persistent, workspace-confined Claude Code
-# sessions, backed by tmux.
+# session — per-user, persistent, workspace-confined browser terminal
+# sessions, backed by tmux. Each session runs a chosen command: a login
+# shell (default) or Claude Code.
 #
 # This is the command ttyd runs for the browser terminal
-# (see platform/ttyd/ttyd-claude.service.template). It also works over SSH.
+# (see platform/ttyd/ttyd-sessions.service.template). It also works over SSH.
 #
 # Why this exists:
 #   * Persistence — each session runs inside tmux, so a browser refresh, a
 #     logoff, or a dropped connection never kills it. Re-opening re-attaches
 #     to the same live session. Detach without killing: Ctrl-b then d.
-#   * Many sessions — every session is an independent Claude Code instance.
-#     ttyd is started with -a (URL args), so opening
-#     https://claude.<domain>/?arg=<name> in another browser tab gives a
+#   * Many sessions — ttyd is started with -a (URL args), so opening
+#     https://sessions.<domain>/?arg=<name> in another browser tab gives a
 #     second, separate session. With no name you get an interactive menu.
 #   * Per-user isolation — ttyd passes the Authelia identity as $TTYD_USER
 #     (ttyd -H Remote-User). Each user gets their own tmux socket under
-#     CLAUDE_SOCKET_DIR and therefore only ever sees their own sessions.
+#     SESSION_SOCKET_DIR and therefore only ever sees their own sessions.
 #     NOTE: a visibility boundary, not a security boundary — every session
 #     still runs as the single OS account ttyd runs as.
 #   * Confined directories — a new session may only open a directory inside
-#     CLAUDE_WORKSPACE_ROOT. It can never run in $HOME or any directory above
-#     the workspace root.
+#     SESSION_WORKSPACE_ROOT. It can never run in $HOME or any directory
+#     above the workspace root.
+#   * Choice of command — each session is either a login shell or Claude
+#     Code. The choice is recorded in a per-session marker file so listing,
+#     resume, and the dashboard all agree on what the session is running.
 #
 # Environment (the systemd unit sets these; the defaults cover direct SSH):
-#   TTYD_USER              authenticated user — REQUIRED, fail-closed
-#   CLAUDE_WORKSPACE_ROOT  workspace root          (default: ~/workspace)
-#   CLAUDE_SOCKET_DIR      per-user tmux sockets   (default: ~/.claude-sessions)
-#   CLAUDE_TMUX_CONF       tmux config for sessions
-#                          (default: /opt/infra/platform/ttyd/claude-tmux.conf)
+#   TTYD_USER               authenticated user — REQUIRED, fail-closed
+#   SESSION_WORKSPACE_ROOT  workspace root          (default: ~/workspace)
+#   SESSION_SOCKET_DIR      per-user tmux sockets   (default: ~/.terminal-sessions)
+#   SESSION_TMUX_CONF       tmux config for sessions
+#                           (default: /opt/infra/platform/ttyd/session-tmux.conf)
 set -euo pipefail
 
-WORKSPACE_ROOT="${CLAUDE_WORKSPACE_ROOT:-${HOME}/workspace}"
-SOCKET_DIR="${CLAUDE_SOCKET_DIR:-${HOME}/.claude-sessions}"
-TMUX_CONF="${CLAUDE_TMUX_CONF:-/opt/infra/platform/ttyd/claude-tmux.conf}"
+WORKSPACE_ROOT="${SESSION_WORKSPACE_ROOT:-${HOME}/workspace}"
+SOCKET_DIR="${SESSION_SOCKET_DIR:-${HOME}/.terminal-sessions}"
+TMUX_CONF="${SESSION_TMUX_CONF:-/opt/infra/platform/ttyd/session-tmux.conf}"
 
 # A session name: 1–32 chars, starts alphanumeric, then alphanumeric / _ / -.
 # Excludes '.' and ':', which tmux treats specially.
@@ -42,6 +45,10 @@ USER_RE='^[a-z_][a-z0-9_-]{0,30}$'
 # Field separator for `tmux list-sessions -F` output — a control byte that
 # cannot occur in a session name or a filesystem path.
 SEP=$'\x1f'
+# Allowed command choices. Keep this set tight — it's the safety boundary
+# for what a user can run inside a session.
+CMD_ALLOWLIST=(shell claude)
+CMD_DEFAULT=shell
 
 # --- output helpers (all to stderr; stdout is reserved for return values) --
 _sgr() { [ -t 2 ] && printf '\033[%sm' "$1" >&2 || true; }
@@ -50,10 +57,39 @@ err()  { _sgr 31; printf 'error: %s\n' "$*" >&2; _sgr 0; }
 dim()  { _sgr 2;  printf '%s\n' "$*" >&2;          _sgr 0; }
 hdr()  { _sgr '1;36'; printf '%s\n' "$*" >&2;      _sgr 0; }
 
-# --- pure helpers (unit-tested via CLAUDE_SESSION_LIB=1) -------------------
+# --- pure helpers (unit-tested via SESSION_LIB=1) -------------------------
 
 valid_name() { printf '%s' "${1-}" | grep -qE "$NAME_RE"; }
 valid_user() { printf '%s' "${1-}" | grep -qE "$USER_RE"; }
+valid_cmd()  {
+  local c="${1-}" ok
+  for ok in "${CMD_ALLOWLIST[@]}"; do [ "$c" = "$ok" ] && return 0; done
+  return 1
+}
+
+# Resolve the OS-level shell command for the running account: prefer the
+# shell recorded for the current OS user, fall back to /bin/bash if that's
+# missing or unfamiliar. Echoed as a single absolute path.
+resolve_shell() {
+  local s
+  s="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"
+  case "$s" in
+    /bin/bash|/usr/bin/bash|/bin/zsh|/usr/bin/zsh|/bin/sh|/usr/bin/sh)
+      printf '%s\n' "$s" ;;
+    *) printf '/bin/bash\n' ;;
+  esac
+}
+
+# Resolve a session command label to the argv tmux should run. Echoes one
+# argument per line so the caller can read into an array.
+resolve_cmd_argv() {
+  local label="${1-}"
+  case "$label" in
+    shell)  printf '%s\n' "$(resolve_shell)" "-l" ;;
+    claude) printf 'claude\n' ;;
+    *) return 1 ;;
+  esac
+}
 
 # Resolve a directory request to an absolute path strictly inside
 # WORKSPACE_ROOT. Echo the safe path and return 0, or return 1 if the request
@@ -75,6 +111,34 @@ confine_dir() {
   return 1
 }
 
+# --- marker files ---------------------------------------------------------
+# One file per session at $SOCKET_DIR/<user>/<name>.cmd holding the command
+# label ("shell" or "claude"). It's the source of truth for "what is this
+# session running" — tmux itself doesn't expose that cleanly.
+
+marker_dir() { printf '%s/%s\n' "$SOCKET_DIR" "$USER_ID"; }
+marker_path() { printf '%s/%s.cmd\n' "$(marker_dir)" "$1"; }
+
+write_marker() {
+  local name="$1" label="$2" dir
+  dir="$(marker_dir)"
+  mkdir -p -- "$dir"
+  chmod 700 "$dir" 2>/dev/null || true
+  printf '%s\n' "$label" > "$(marker_path "$name")"
+}
+
+read_marker() {
+  local f
+  f="$(marker_path "$1")"
+  if [ -r "$f" ]; then
+    head -n1 -- "$f" | tr -d '\r\n'
+  else
+    printf '%s' "$CMD_DEFAULT"
+  fi
+}
+
+clear_marker() { rm -f -- "$(marker_path "$1")"; }
+
 # --- tmux plumbing --------------------------------------------------------
 # Globals set by setup(): USER_ID, SOCKET, TM (array).
 
@@ -94,15 +158,12 @@ setup() {
 
   mkdir -p -- "$SOCKET_DIR"; chmod 700 -- "$SOCKET_DIR"
   mkdir -p -- "$WORKSPACE_ROOT"
+  mkdir -p -- "$(marker_dir)"; chmod 700 -- "$(marker_dir)"
 
   SOCKET="$SOCKET_DIR/$USER_ID.sock"
   TM=(tmux)
   [ -r "$TMUX_CONF" ] && TM+=(-f "$TMUX_CONF")
   TM+=(-S "$SOCKET")
-
-  if ! command -v claude >/dev/null 2>&1; then
-    err "the 'claude' command is not on PATH — sessions will fail to start."
-  fi
 }
 
 tm() { "${TM[@]}" "$@"; }
@@ -114,18 +175,23 @@ session_rows() {
     2>/dev/null || true
 }
 
-# open_session <name> [dir] — create the session if absent, then attach.
-# Returns when the user detaches (Ctrl-b d); never kills the session.
+# open_session <name> [dir] [cmd] — create if absent, then attach.
+# cmd is the label ("shell" or "claude"); only used at creation. On resume
+# the existing tmux session keeps whatever it was started with.
 open_session() {
-  local name="$1" dir="${2:-$WORKSPACE_ROOT}"
+  local name="$1" dir="${2:-$WORKSPACE_ROOT}" label="${3:-$CMD_DEFAULT}"
+  if ! valid_cmd "$label"; then label="$CMD_DEFAULT"; fi
+  local argv=() line
+  while IFS= read -r line; do argv+=("$line"); done < <(resolve_cmd_argv "$label")
   if ! tm has-session -t "=$name" 2>/dev/null; then
-    if [ -n "${CLAUDE_SESSION_DRYRUN:-}" ]; then
-      printf 'CREATE %s %s\n' "$name" "$dir"; return 0
+    if [ -n "${SESSION_DRYRUN:-}" ]; then
+      printf 'CREATE %s %s %s\n' "$name" "$dir" "$label"; return 0
     fi
     mkdir -p -- "$dir"
-    tm new-session -d -s "$name" -c "$dir" claude
-    say "started session '$name' in $dir"
-  elif [ -n "${CLAUDE_SESSION_DRYRUN:-}" ]; then
+    write_marker "$name" "$label"
+    tm new-session -d -s "$name" -c "$dir" -- "${argv[@]}"
+    say "started session '$name' ($label) in $dir"
+  elif [ -n "${SESSION_DRYRUN:-}" ]; then
     printf 'ATTACH %s\n' "$name"; return 0
   fi
   tm attach-session -t "=$name" || true
@@ -164,8 +230,36 @@ choose_dir() {
   printf '%s\n' "$abs"
 }
 
+# choose_cmd — prompt for a command label; echo a valid label to stdout, or
+# return 1 if cancelled. Hides the claude option if the binary is missing.
+choose_cmd() {
+  local has_claude=0 ans
+  command -v claude >/dev/null 2>&1 && has_claude=1
+  {
+    printf '\n  Command:\n'
+    printf '    1) shell  (login shell — default)\n'
+    if [ "$has_claude" -eq 1 ]; then
+      printf '    2) claude (Claude Code)\n'
+    else
+      printf '    2) claude (unavailable — not installed)\n'
+    fi
+    printf '\n  Pick a number. Blank picks 1.\n  > '
+  } >&2
+  read -r ans || return 1
+  case "${ans:-1}" in
+    1|shell)               printf 'shell\n' ;;
+    2|claude)
+      if [ "$has_claude" -ne 1 ]; then
+        err "claude is not installed on this server."
+        return 1
+      fi
+      printf 'claude\n' ;;
+    *) err "invalid choice."; return 1 ;;
+  esac
+}
+
 new_session_flow() {
-  local name dir
+  local name dir label
   printf '\n  New session name (letters, digits, _ -): ' >&2
   read -r name || return 0
   if ! valid_name "$name"; then
@@ -176,8 +270,9 @@ new_session_flow() {
     err "session '$name' already exists — open it from the list."
     return 0
   fi
-  dir="$(choose_dir "$name")" || { dim "  cancelled."; return 0; }
-  open_session "$name" "$dir"
+  dir="$(choose_dir "$name")"   || { dim "  cancelled."; return 0; }
+  label="$(choose_cmd)"         || { dim "  cancelled."; return 0; }
+  open_session "$name" "$dir" "$label"
 }
 
 kill_by_index() {
@@ -189,24 +284,28 @@ kill_by_index() {
     return 0
   fi
   name="${rows[$((idx - 1))]%%"$SEP"*}"
-  printf '  kill "%s" and stop its Claude? [y/N] ' "$name" >&2
+  printf '  kill "%s" and stop the process inside it? [y/N] ' "$name" >&2
   read -r ans || return 0
   case "$ans" in
     [Yy]*)
-      if tm kill-session -t "=$name" 2>/dev/null; then say "  killed '$name'."
-      else err "could not kill '$name'."; fi ;;
+      if tm kill-session -t "=$name" 2>/dev/null; then
+        clear_marker "$name"
+        say "  killed '$name'."
+      else
+        err "could not kill '$name'."
+      fi ;;
     *) dim "  kept." ;;
   esac
 }
 
 menu() {
-  local rows row name wins state path i choice
+  local rows row name wins state path label i choice
   while :; do
     rows=()
     while IFS= read -r row; do [ -n "$row" ] && rows+=("$row"); done \
       < <(session_rows)
     printf '\n' >&2
-    hdr "  Claude sessions · $USER_ID"
+    hdr "  Terminal sessions · $USER_ID"
     dim  "  workspace: $WORKSPACE_ROOT"
     printf '\n' >&2
     if [ "${#rows[@]}" -eq 0 ]; then
@@ -215,8 +314,9 @@ menu() {
       i=1
       for row in "${rows[@]}"; do
         IFS="$SEP" read -r name wins state path <<<"$row"
-        printf '   %2d) %-22s [%s · %sw] %s\n' \
-          "$i" "$name" "$state" "$wins" "$path" >&2
+        label="$(read_marker "$name")"
+        printf '   %2d) %-22s [%s · %s · %sw] %s\n' \
+          "$i" "$name" "$label" "$state" "$wins" "$path" >&2
         i=$((i + 1))
       done
     fi
@@ -244,16 +344,18 @@ menu() {
 }
 
 main() {
-  local arg="${1-}" dir
+  local arg="${1-}" dir label
   setup
   if [ -n "$arg" ]; then
     if valid_name "$arg"; then
       if tm has-session -t "=$arg" 2>/dev/null; then
         open_session "$arg"
       else
-        # A new session named via the ttyd URL — ask where it should open.
+        # A new session named via the ttyd URL — ask where to open it and
+        # which command to run. Defaults to the shell on a quiet enter.
         if dir="$(choose_dir "$arg")"; then
-          open_session "$arg" "$dir"
+          label="$(choose_cmd)" || label="$CMD_DEFAULT"
+          open_session "$arg" "$dir" "$label"
         fi
       fi
     else
@@ -265,8 +367,8 @@ main() {
   menu
 }
 
-# Library mode: tests source this file with CLAUDE_SESSION_LIB=1 to exercise
+# Library mode: tests source this file with SESSION_LIB=1 to exercise
 # the pure helpers without starting tmux.
-if [ -z "${CLAUDE_SESSION_LIB:-}" ]; then
+if [ -z "${SESSION_LIB:-}" ]; then
   main "$@"
 fi

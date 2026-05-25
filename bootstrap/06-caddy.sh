@@ -26,20 +26,20 @@ CADDY_DIR="${INFRA_ROOT}/platform/caddy"
 # Render Caddyfile.template -> Caddyfile with literal string replacement.
 # Component selection: strip the Caddy server block for anything not installed
 # so Caddy never advertises a dead route or fetches an unused certificate.
-INSTALL_CLAUDE="${INSTALL_CLAUDE:-true}"
+INSTALL_SESSIONS="${INSTALL_SESSIONS:-true}"
 INSTALL_DASHBOARD="${INSTALL_DASHBOARD:-true}"
 INSTALL_DOZZLE="${INSTALL_DOZZLE:-true}"
 INSTALL_GLANCES="${INSTALL_GLANCES:-true}"
 INSTALL_NTOPNG="${INSTALL_NTOPNG:-true}"
 PROFILE="${OBSERVABILITY_PROFILE:-lightweight}"
 disabled=""
-[ "${INSTALL_CLAUDE}"    = "true" ] || disabled="${disabled},claude"
+[ "${INSTALL_SESSIONS}"  = "true" ] || disabled="${disabled},sessions"
 [ "${INSTALL_DASHBOARD}" = "true" ] || disabled="${disabled},dashboard"
-# The /api route inside the dashboard block (component:sessions) exists only
-# when both the dashboard (to host the page) and Claude (to have sessions to
-# manage) are installed.
-if [ "${INSTALL_CLAUDE}" != "true" ] || [ "${INSTALL_DASHBOARD}" != "true" ]; then
-  disabled="${disabled},sessions"
+# The /api route inside the dashboard block (component:sessions-api) exists
+# only when both the dashboard (to host the page) and the sessions stack
+# (to have sessions to manage) are installed.
+if [ "${INSTALL_SESSIONS}" != "true" ] || [ "${INSTALL_DASHBOARD}" != "true" ]; then
+  disabled="${disabled},sessions-api"
 fi
 # Glances/Dozzle/ntopng exist only on the lightweight profile.
 if [ "${PROFILE}" = "lightweight" ]; then
@@ -55,12 +55,12 @@ fi
 # Resolve subdomain labels (default to the conventional names).
 SUBDOMAIN_AUTH="${SUBDOMAIN_AUTH:-auth}"
 SUBDOMAIN_DASHBOARD="${SUBDOMAIN_DASHBOARD:-dashboard}"
-SUBDOMAIN_CLAUDE="${SUBDOMAIN_CLAUDE:-claude}"
+SUBDOMAIN_SESSIONS="${SUBDOMAIN_SESSIONS:-sessions}"
 SUBDOMAIN_DOZZLE="${SUBDOMAIN_DOZZLE:-dozzle}"
 SUBDOMAIN_GLANCES="${SUBDOMAIN_GLANCES:-glances}"
 SUBDOMAIN_NTOPNG="${SUBDOMAIN_NTOPNG:-ntopng}"
 SUBDOMAIN_GRAFANA="${SUBDOMAIN_GRAFANA:-grafana}"
-subs="AUTH=${SUBDOMAIN_AUTH},DASHBOARD=${SUBDOMAIN_DASHBOARD},CLAUDE=${SUBDOMAIN_CLAUDE}"
+subs="AUTH=${SUBDOMAIN_AUTH},DASHBOARD=${SUBDOMAIN_DASHBOARD},SESSIONS=${SUBDOMAIN_SESSIONS}"
 subs="${subs},DOZZLE=${SUBDOMAIN_DOZZLE},GLANCES=${SUBDOMAIN_GLANCES}"
 subs="${subs},NTOPNG=${SUBDOMAIN_NTOPNG},GRAFANA=${SUBDOMAIN_GRAFANA}"
 

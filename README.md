@@ -18,7 +18,7 @@ steps below are the whole procedure.
 - A VPS (Ubuntu 24.04) with an admin (non-root) user that has SSH key access
   and `sudo`.
 - A domain you control, with DNS A records pointing at the server's public
-  IP: the apex `<domain>` itself, plus `auth.<domain>`, `claude.<domain>`,
+  IP: the apex `<domain>` itself, plus `auth.<domain>`, `sessions.<domain>`,
   `dashboard.<domain>`, `dozzle.<domain>`, `glances.<domain>`,
   `ntopng.<domain>`, and `grafana.<domain>` on the full profile. A wildcard
   `*.<domain>` covers the subdomains; the apex still needs its own A record.
@@ -103,15 +103,18 @@ bootstrap (it prompts once, per component, and remembers the answers in
 - **Caddy reverse proxy** with automatic TLS, consulting Authelia on every
   request via `forward_auth`.
 - **Docker + Compose v2** with log rotation.
-- **ttyd web terminal** serving Claude Code in a browser tab at
-  `claude.<PRIMARY_DOMAIN>`, opening in a working directory you choose at
-  bootstrap (no SSH client needed).
+- **ttyd web terminal** serving per-user browser sessions at
+  `sessions.<PRIMARY_DOMAIN>` — each session runs a login shell or Claude
+  Code (your pick), in a workspace directory you choose. No SSH client
+  needed. Persistent via tmux: a refresh or dropped connection never kills
+  a session.
 - **Platform dashboard** at `<PRIMARY_DOMAIN>` and
-  `dashboard.<PRIMARY_DOMAIN>` — a landing page indexing every tool above.
+  `dashboard.<PRIMARY_DOMAIN>` — a landing page indexing every tool above,
+  with a live "Terminal sessions" panel for list / start / stop.
 - **Observability stack** (profile-selectable, dashboards bound to
   `127.0.0.1` internally, reached through Caddy).
-- **Claude Code** on the host for the admin user, plus a `claude-session`
-  helper that runs one persistent tmux-attached instance.
+- **Claude Code** on the host for the admin user — optional, independent of
+  the browser terminal: usable as a session command and over SSH.
 
 ### Login flow (browser, any device)
 
@@ -130,13 +133,13 @@ logged in, every dashboard and the Claude terminal are open until expiry.
 |---|---|
 | **SSO login portal** | `https://auth.<PRIMARY_DOMAIN>` |
 | **Platform dashboard** (tool index) | `https://<PRIMARY_DOMAIN>` · `https://dashboard.<PRIMARY_DOMAIN>` |
-| **Claude Code (browser terminal)** | `https://claude.<PRIMARY_DOMAIN>` |
+| **Terminal sessions (browser)** | `https://sessions.<PRIMARY_DOMAIN>` |
 | **Dozzle** (container logs) | `https://dozzle.<PRIMARY_DOMAIN>` |
 | **Glances** (host metrics) | `https://glances.<PRIMARY_DOMAIN>` |
 | **ntopng** (traffic/DPI) | `https://ntopng.<PRIMARY_DOMAIN>` |
 | **Grafana** *(full profile)* | `https://grafana.<PRIMARY_DOMAIN>` — login with `GRAFANA_ADMIN_PASSWORD` |
 
-The subdomain labels above (`auth`, `claude`, …) are defaults — `bootstrap.sh`
+The subdomain labels above (`auth`, `sessions`, …) are defaults — `bootstrap.sh`
 can set a custom label per component (the `SUBDOMAIN_*` flags).
 
 Without `PRIMARY_DOMAIN`, dashboards are localhost-only and Authelia/Caddy
@@ -169,17 +172,19 @@ It sets the password, enrolls a TOTP device, and prints the QR.
 
 - **SSH:** `ssh <admin>@<server>` with the admin user's key. Unchanged by
   Authelia (which gates only the HTTP layer).
-- **Browser:** `https://claude.<PRIMARY_DOMAIN>` → Authelia login → live
-  Claude session. No SSH client required.
-- **Remote Claude Code over SSH:** `claude-session` from any SSH session
-  attaches the one persistent tmux-backed instance.
+- **Browser:** `https://sessions.<PRIMARY_DOMAIN>` → Authelia login → menu
+  to open or start a session (shell or Claude). No SSH client required.
+- **Sessions over SSH:** the `session` helper (or the dashboard's API) is
+  also reachable from a plain SSH session — same tmux sockets, same
+  per-user namespacing.
 
 ### What `99-verify.sh` asserts is green
 
 UFW active and SSH rate-limited · fail2ban active · Docker active · Authelia
-container + health endpoint · Caddy container · ttyd-claude service ·
-dashboard page rendered · Claude Code installed · no dashboard bound to
-`0.0.0.0` · all observability containers running.
+container + health endpoint · Caddy container · ttyd-sessions service ·
+dashboard page rendered · session-manager API healthy · Claude Code
+installed (when selected) · no dashboard bound to `0.0.0.0` · all
+observability containers running.
 
 ---
 

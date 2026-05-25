@@ -6,8 +6,8 @@
 #   __PRIMARY_DOMAIN__      e.g. "example.com"
 #   __CADDY_ACME_EMAIL__    Let's Encrypt registration email
 #   __SUBDOMAIN_<NAME>__    the chosen label for each component's subdomain
-#                           (AUTH, DASHBOARD, CLAUDE, DOZZLE, GLANCES, NTOPNG,
-#                           GRAFANA) — defaults to the lowercase name
+#                           (AUTH, DASHBOARD, SESSIONS, DOZZLE, GLANCES,
+#                           NTOPNG, GRAFANA) — defaults to the lowercase name
 #
 # Component blocks are wrapped in "# >>>component:NAME ... # <<<component:NAME"
 # markers; 06-caddy.sh removes a block when that component is not installed,
@@ -55,21 +55,21 @@ __SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__ {
 }
 
 # >>>component:dashboard
-# Platform landing page: the tool index plus the live "Claude sessions"
+# Platform landing page: the tool index plus the live "Terminal sessions"
 # section. Reachable at the apex domain and the dashboard subdomain. Gated by
 # Authelia.
 __PRIMARY_DOMAIN__, __SUBDOMAIN_DASHBOARD__.__PRIMARY_DOMAIN__ {
 	import secure_headers
 	import authelia_gate
-# >>>component:sessions
-	# The dashboard's "Claude sessions" section calls the session-manager
+# >>>component:sessions-api
+	# The dashboard's "Terminal sessions" section calls the session-manager
 	# API. Same origin, same Authelia gate — no extra subdomain. Authelia
 	# runs first (forward_auth expands to a `route`, ordered before `handle`),
 	# so the API always receives a verified Remote-User.
 	handle /api/* {
 		reverse_proxy 127.0.0.1:7682
 	}
-# <<<component:sessions
+# <<<component:sessions-api
 	handle {
 		root * /srv/dashboard
 		file_server
@@ -77,14 +77,14 @@ __PRIMARY_DOMAIN__, __SUBDOMAIN_DASHBOARD__.__PRIMARY_DOMAIN__ {
 }
 # <<<component:dashboard
 
-# >>>component:claude
-# Claude Code in a browser tab, via ttyd. Gated by Authelia.
-__SUBDOMAIN_CLAUDE__.__PRIMARY_DOMAIN__ {
+# >>>component:sessions
+# Browser terminal sessions (shell or Claude Code) via ttyd. Gated by Authelia.
+__SUBDOMAIN_SESSIONS__.__PRIMARY_DOMAIN__ {
 	import secure_headers
 	import authelia_gate
 	reverse_proxy 127.0.0.1:7681
 }
-# <<<component:claude
+# <<<component:sessions
 
 # >>>component:dozzle
 __SUBDOMAIN_DOZZLE__.__PRIMARY_DOMAIN__ {

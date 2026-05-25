@@ -8,8 +8,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 rc=0
 
-echo "== claude-session (shell) =="
-bash "${HERE}/test_claude_session.sh" || rc=1
+echo "== session helper (shell) =="
+bash "${HERE}/test_session_helper.sh" || rc=1
 echo
 
 echo "== session-manager (python) =="

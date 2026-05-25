@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# 11 - session-manager: the dashboard backend for the browser Claude sessions.
+# 11 - session-manager: the dashboard backend for the browser terminal sessions.
 #
 # A small standard-library Python HTTP service (platform/session-manager/
-# server.py) that lets the dashboard's "Claude sessions" section list,
-# create, and stop the per-user, tmux-backed Claude Code sessions ttyd serves
-# in the browser. Bound to 127.0.0.1:7682; Caddy reverse-proxies the
-# dashboard's /api/* routes to it, gated by Authelia.
+# server.py) that lets the dashboard's "Terminal sessions" section list,
+# create, and stop the per-user, tmux-backed sessions ttyd serves in the
+# browser. Bound to 127.0.0.1:7682; Caddy reverse-proxies the dashboard's
+# /api/* routes to it, gated by Authelia.
 #
-# Runs as a systemd unit under the admin user — the same account as ttyd — so
-# it shares that account's per-user tmux sockets and can find `tmux` and
+# Runs as a systemd unit under the admin user — the same account as ttyd —
+# so it shares that account's per-user tmux sockets and can find `tmux` and
 # `claude` on PATH. No container, by the same reasoning as 07-ttyd.
 #
-# Installed only when the browser terminal AND the dashboard are both present
-# (without the dashboard there is no page to host the session UI). No-op if
-# PRIMARY_DOMAIN is unset (no Caddy to front it).
+# Installed only when the browser terminal AND the dashboard are both
+# present (without the dashboard there is no page to host the session UI).
+# No-op if PRIMARY_DOMAIN is unset (no Caddy to front it).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/common.sh"
@@ -28,10 +28,10 @@ if [ -z "${PRIMARY_DOMAIN:-}" ]; then
   exit 0
 fi
 
-INSTALL_CLAUDE="${INSTALL_CLAUDE:-true}"
+INSTALL_SESSIONS="${INSTALL_SESSIONS:-true}"
 INSTALL_DASHBOARD="${INSTALL_DASHBOARD:-true}"
-if [ "${INSTALL_CLAUDE}" != "true" ] || [ "${INSTALL_DASHBOARD}" != "true" ]; then
-  log INFO "INSTALL_CLAUDE=${INSTALL_CLAUDE} INSTALL_DASHBOARD=${INSTALL_DASHBOARD}; skipping session-manager"
+if [ "${INSTALL_SESSIONS}" != "true" ] || [ "${INSTALL_DASHBOARD}" != "true" ]; then
+  log INFO "INSTALL_SESSIONS=${INSTALL_SESSIONS} INSTALL_DASHBOARD=${INSTALL_DASHBOARD}; skipping session-manager"
   systemctl disable --now session-manager.service 2>/dev/null || true
   rm -f "${UNIT}"
   systemctl daemon-reload 2>/dev/null || true
@@ -48,7 +48,7 @@ ADMIN_HOME="$(getent passwd "${ADMIN}" | cut -d: -f6)"
 [ -n "${ADMIN_HOME}" ] || die "cannot resolve home for ${ADMIN}"
 
 # WORKSPACE_ROOT is resolved + persisted to .env by 07-ttyd, which always runs
-# before this step when INSTALL_CLAUDE=true. Fall back to the same default,
+# before this step when INSTALL_SESSIONS=true. Fall back to the same default,
 # and resolve a leading ~ / relative value the same way 07-ttyd does.
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-${ADMIN_HOME}/workspace}"
 # shellcheck disable=SC2088
@@ -58,7 +58,7 @@ case "${WORKSPACE_ROOT}" in
   /*)     : ;;
   *)      WORKSPACE_ROOT="${ADMIN_HOME}/${WORKSPACE_ROOT}" ;;
 esac
-SOCKET_DIR="${ADMIN_HOME}/.claude-sessions"
+SOCKET_DIR="${ADMIN_HOME}/.terminal-sessions"
 install -d -o "${ADMIN}" -g "${ADMIN}" "${WORKSPACE_ROOT}"
 install -d -m 700 -o "${ADMIN}" -g "${ADMIN}" "${SOCKET_DIR}"
 
