@@ -124,37 +124,51 @@ done
 # accepts it on login), and prints the otpauth URI. We capture that URI,
 # stash it in a root-only file, and render a QR to the terminal.
 ENROLL_FILE=/opt/infra/.authelia-enrollment
-if [ ! -s "${ENROLL_FILE}" ]; then
-  log INFO "registering TOTP device for ${AUTHELIA_USER} via authelia storage CLI"
-  OUTPUT="$(docker compose --project-name infra-authelia \
-    -f "${AUTHELIA_DIR}/docker-compose.yml" \
-    exec -T authelia authelia storage user totp generate "${AUTHELIA_USER}" \
-      --config /config/configuration.yml 2>&1)" || {
-    log ERROR "authelia storage user totp generate failed:"
-    printf '%s\n' "${OUTPUT}" >&2
-    die "could not enroll TOTP for ${AUTHELIA_USER}"
-  }
-  OTPAUTH="$(printf '%s\n' "${OUTPUT}" | grep -oE 'otpauth://[^[:space:]]+' | head -1)"
-  [ -n "${OTPAUTH}" ] || {
-    log ERROR "could not extract otpauth URI; full CLI output:"
-    printf '%s\n' "${OUTPUT}" >&2
-    die "TOTP enrollment failed"
-  }
-  umask 077
-  printf '%s\n' "${OTPAUTH}" > "${ENROLL_FILE}"
-  chmod 600 "${ENROLL_FILE}"
-
-  if command -v qrencode >/dev/null 2>&1; then
-    log INFO "TOTP enrollment QR (scan into your authenticator app — 1Password, Authy, Google Authenticator):"
-    echo
-    qrencode -t ANSIUTF8 "${OTPAUTH}"
-    echo
-  else
-    log WARN "qrencode not installed; otpauth URI saved at ${ENROLL_FILE}"
-  fi
-  log INFO "otpauth:// URI stashed at ${ENROLL_FILE} (root, 0600). Keep it safe — it is your second factor."
-else
+if [ -s "${ENROLL_FILE}" ]; then
   log INFO "authelia TOTP enrollment already present at ${ENROLL_FILE} (skipping)"
+else
+  # The enrollment file is missing — but the Authelia DB might still have a
+  # TOTP registered (e.g. the file was deleted or never persisted). Ask the
+  # CLI; only enroll if the user truly has nothing yet. Avoids invalidating
+  # an authenticator app that is already paired.
+  if docker compose --project-name infra-authelia \
+       -f "${AUTHELIA_DIR}/docker-compose.yml" \
+       exec -T authelia authelia storage user totp export \
+         --config /config/configuration.yml 2>/dev/null \
+       | grep -qE "^[[:space:]]*username:[[:space:]]*${AUTHELIA_USER}\$"; then
+    log WARN "authelia DB already has a TOTP for ${AUTHELIA_USER} but ${ENROLL_FILE} is missing"
+    log WARN "your existing authenticator app still works — keep using it"
+    log WARN "to re-create the QR/backup file, run: docker compose --project-name infra-authelia exec authelia authelia storage user totp generate ${AUTHELIA_USER} --force --config /config/configuration.yml (this WILL invalidate the current pairing)"
+  else
+    log INFO "registering TOTP device for ${AUTHELIA_USER} via authelia storage CLI"
+    OUTPUT="$(docker compose --project-name infra-authelia \
+      -f "${AUTHELIA_DIR}/docker-compose.yml" \
+      exec -T authelia authelia storage user totp generate "${AUTHELIA_USER}" \
+        --config /config/configuration.yml 2>&1)" || {
+      log ERROR "authelia storage user totp generate failed:"
+      printf '%s\n' "${OUTPUT}" >&2
+      die "could not enroll TOTP for ${AUTHELIA_USER}"
+    }
+    OTPAUTH="$(printf '%s\n' "${OUTPUT}" | grep -oE 'otpauth://[^[:space:]]+' | head -1)"
+    [ -n "${OTPAUTH}" ] || {
+      log ERROR "could not extract otpauth URI; full CLI output:"
+      printf '%s\n' "${OUTPUT}" >&2
+      die "TOTP enrollment failed"
+    }
+    umask 077
+    printf '%s\n' "${OTPAUTH}" > "${ENROLL_FILE}"
+    chmod 600 "${ENROLL_FILE}"
+
+    if command -v qrencode >/dev/null 2>&1; then
+      log INFO "TOTP enrollment QR (scan into your authenticator app — 1Password, Authy, Google Authenticator):"
+      echo
+      qrencode -t ANSIUTF8 "${OTPAUTH}"
+      echo
+    else
+      log WARN "qrencode not installed; otpauth URI saved at ${ENROLL_FILE}"
+    fi
+    log INFO "otpauth:// URI stashed at ${ENROLL_FILE} (root, 0600). Keep it safe — it is your second factor."
+  fi
 fi
 
 log INFO "authelia up; will gate every subdomain under *.${PRIMARY_DOMAIN}"
