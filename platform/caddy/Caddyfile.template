@@ -32,31 +32,33 @@
 }
 
 # Snippet: gate a route on a valid Authelia session.
+#
+# IMPORTANT — the *caller* must wrap this import inside a `route { }` block.
+#
+# Caddy reorders directives by priority. In particular:
+#   request_header (header group) > forward_auth > handle > route > terminal.
+# So a naked sequence of `import authelia_gate; handle /api/* { ... }` ends
+# up running `handle /api/*` BEFORE the strips and forward_auth (handle's
+# priority is higher than route's). The request reaches the upstream with
+# no Remote-User, and session-manager returns 401 "missing or ambiguous
+# identity" even though the user is logged in.
+#
+# Wrapping the *whole* site block contents in `route { ... }` forces
+# source-order evaluation across imports + handle blocks. Don't try to put
+# the `route` wrapper inside this snippet — that solves it only when the
+# caller has no `handle` blocks (e.g. a single top-level reverse_proxy).
+#
+# The strips are also belt-and-suspenders against client-supplied Remote-User
+# spoofing (CVE-2026-30851 / Caddy < v2.11.2). On v2.11.2+, copy_headers
+# already deletes the request header before setting it from the auth response.
 (authelia_gate) {
-	# `route { ... }` preserves the directives' source order. Without it,
-	# Caddy reorders by directive priority: `request_header` (header group)
-	# is sorted AFTER `forward_auth`, so the strips below run AFTER
-	# forward_auth's `copy_headers` has set Remote-User on the request —
-	# silently DELETING the verified identity before the next handler
-	# (e.g. /api/* → session-manager) sees it. The visible symptom is
-	# session-manager returning 401 "missing or ambiguous identity" even
-	# though the user is logged in.
-	#
-	# The strips are also belt-and-suspenders against client-supplied
-	# Remote-User spoofing (CVE-2026-30851 / Caddy < v2.11.2). In Caddy
-	# v2.11.2+, `copy_headers` inside handle_response also deletes the
-	# request header before setting it from the auth response, so the
-	# strips are redundant on patched Caddy — but harmless when ordered
-	# correctly, and a useful safety net if anyone runs an older image.
-	route {
-		request_header -Remote-User
-		request_header -Remote-Groups
-		request_header -Remote-Name
-		request_header -Remote-Email
-		forward_auth 127.0.0.1:9091 {
-			uri /api/verify?rd=https%3A%2F%2F__SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__
-			copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
-		}
+	request_header -Remote-User
+	request_header -Remote-Groups
+	request_header -Remote-Name
+	request_header -Remote-Email
+	forward_auth 127.0.0.1:9091 {
+		uri /api/verify?rd=https%3A%2F%2F__SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__
+		copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
 	}
 }
 
@@ -70,21 +72,27 @@ __SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__ {
 # Platform landing page: the tool index plus the live "Terminal sessions"
 # section. Reachable at the apex domain and the dashboard subdomain. Gated by
 # Authelia.
+#
+# The `route { }` wrapper around `import authelia_gate` + the handle blocks
+# is critical: without it, Caddy's directive-priority sort puts `handle`
+# before the gate, so `/api/*` reverse-proxies to session-manager BEFORE
+# forward_auth runs — the upstream sees no Remote-User and returns 401.
 __PRIMARY_DOMAIN__, __SUBDOMAIN_DASHBOARD__.__PRIMARY_DOMAIN__ {
 	import secure_headers
-	import authelia_gate
+	route {
+		import authelia_gate
 # >>>component:sessions-api
-	# The dashboard's "Terminal sessions" section calls the session-manager
-	# API. Same origin, same Authelia gate — no extra subdomain. Authelia
-	# runs first (forward_auth expands to a `route`, ordered before `handle`),
-	# so the API always receives a verified Remote-User.
-	handle /api/* {
-		reverse_proxy 127.0.0.1:7682
-	}
+		# The dashboard's "Terminal sessions" section calls the
+		# session-manager API. Same origin, same Authelia gate — no
+		# extra subdomain.
+		handle /api/* {
+			reverse_proxy 127.0.0.1:7682
+		}
 # <<<component:sessions-api
-	handle {
-		root * /srv/dashboard
-		file_server
+		handle {
+			root * /srv/dashboard
+			file_server
+		}
 	}
 }
 # <<<component:dashboard
@@ -93,32 +101,40 @@ __PRIMARY_DOMAIN__, __SUBDOMAIN_DASHBOARD__.__PRIMARY_DOMAIN__ {
 # Browser terminal sessions (shell or Claude Code) via ttyd. Gated by Authelia.
 __SUBDOMAIN_SESSIONS__.__PRIMARY_DOMAIN__ {
 	import secure_headers
-	import authelia_gate
-	reverse_proxy 127.0.0.1:7681
+	route {
+		import authelia_gate
+		reverse_proxy 127.0.0.1:7681
+	}
 }
 # <<<component:sessions
 
 # >>>component:dozzle
 __SUBDOMAIN_DOZZLE__.__PRIMARY_DOMAIN__ {
 	import secure_headers
-	import authelia_gate
-	reverse_proxy 127.0.0.1:8080
+	route {
+		import authelia_gate
+		reverse_proxy 127.0.0.1:8080
+	}
 }
 # <<<component:dozzle
 
 # >>>component:glances
 __SUBDOMAIN_GLANCES__.__PRIMARY_DOMAIN__ {
 	import secure_headers
-	import authelia_gate
-	reverse_proxy 127.0.0.1:61208
+	route {
+		import authelia_gate
+		reverse_proxy 127.0.0.1:61208
+	}
 }
 # <<<component:glances
 
 # >>>component:ntopng
 __SUBDOMAIN_NTOPNG__.__PRIMARY_DOMAIN__ {
 	import secure_headers
-	import authelia_gate
-	reverse_proxy 127.0.0.1:3000
+	route {
+		import authelia_gate
+		reverse_proxy 127.0.0.1:3000
+	}
 }
 # <<<component:ntopng
 
@@ -126,7 +142,9 @@ __SUBDOMAIN_NTOPNG__.__PRIMARY_DOMAIN__ {
 # Grafana exists only on the FULL observability profile.
 __SUBDOMAIN_GRAFANA__.__PRIMARY_DOMAIN__ {
 	import secure_headers
-	import authelia_gate
-	reverse_proxy 127.0.0.1:3001
+	route {
+		import authelia_gate
+		reverse_proxy 127.0.0.1:3001
+	}
 }
 # <<<component:grafana
