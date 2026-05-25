@@ -33,18 +33,30 @@
 
 # Snippet: gate a route on a valid Authelia session.
 (authelia_gate) {
-	# Strip any client-supplied identity headers BEFORE consulting Authelia.
-	# forward_auth's copy_headers only *sets* these from the auth response —
-	# it never deletes a value the client sent (CVE-2026-30851 / Caddy <
-	# v2.11.2). Without this strip a logged-in user could spoof Remote-User
-	# and impersonate another, defeating the per-user session isolation.
-	request_header -Remote-User
-	request_header -Remote-Groups
-	request_header -Remote-Name
-	request_header -Remote-Email
-	forward_auth 127.0.0.1:9091 {
-		uri /api/verify?rd=https%3A%2F%2F__SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__
-		copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+	# `route { ... }` preserves the directives' source order. Without it,
+	# Caddy reorders by directive priority: `request_header` (header group)
+	# is sorted AFTER `forward_auth`, so the strips below run AFTER
+	# forward_auth's `copy_headers` has set Remote-User on the request —
+	# silently DELETING the verified identity before the next handler
+	# (e.g. /api/* → session-manager) sees it. The visible symptom is
+	# session-manager returning 401 "missing or ambiguous identity" even
+	# though the user is logged in.
+	#
+	# The strips are also belt-and-suspenders against client-supplied
+	# Remote-User spoofing (CVE-2026-30851 / Caddy < v2.11.2). In Caddy
+	# v2.11.2+, `copy_headers` inside handle_response also deletes the
+	# request header before setting it from the auth response, so the
+	# strips are redundant on patched Caddy — but harmless when ordered
+	# correctly, and a useful safety net if anyone runs an older image.
+	route {
+		request_header -Remote-User
+		request_header -Remote-Groups
+		request_header -Remote-Name
+		request_header -Remote-Email
+		forward_auth 127.0.0.1:9091 {
+			uri /api/verify?rd=https%3A%2F%2F__SUBDOMAIN_AUTH__.__PRIMARY_DOMAIN__
+			copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+		}
 	}
 }
 
