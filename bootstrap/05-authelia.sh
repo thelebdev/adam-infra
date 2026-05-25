@@ -127,28 +127,32 @@ ENROLL_FILE=/opt/infra/.authelia-enrollment
 if [ -s "${ENROLL_FILE}" ]; then
   log INFO "authelia TOTP enrollment already present at ${ENROLL_FILE} (skipping)"
 else
-  # The enrollment file is missing — but the Authelia DB might still have a
-  # TOTP registered (e.g. the file was deleted or never persisted). Ask the
-  # CLI; only enroll if the user truly has nothing yet. Avoids invalidating
-  # an authenticator app that is already paired.
-  if docker compose --project-name infra-authelia \
-       -f "${AUTHELIA_DIR}/docker-compose.yml" \
-       exec -T authelia authelia storage user totp export \
-         --config /config/configuration.yml 2>/dev/null \
-       | grep -qE "^[[:space:]]*username:[[:space:]]*${AUTHELIA_USER}\$"; then
-    log WARN "authelia DB already has a TOTP for ${AUTHELIA_USER} but ${ENROLL_FILE} is missing"
-    log WARN "your existing authenticator app still works — keep using it"
-    log WARN "to re-create the QR/backup file, run: docker compose --project-name infra-authelia exec authelia authelia storage user totp generate ${AUTHELIA_USER} --force --config /config/configuration.yml (this WILL invalidate the current pairing)"
-  else
-    log INFO "registering TOTP device for ${AUTHELIA_USER} via authelia storage CLI"
-    OUTPUT="$(docker compose --project-name infra-authelia \
-      -f "${AUTHELIA_DIR}/docker-compose.yml" \
-      exec -T authelia authelia storage user totp generate "${AUTHELIA_USER}" \
-        --config /config/configuration.yml 2>&1)" || {
+  log INFO "registering TOTP device for ${AUTHELIA_USER} via authelia storage CLI"
+  set +e
+  OUTPUT="$(docker compose --project-name infra-authelia \
+    -f "${AUTHELIA_DIR}/docker-compose.yml" \
+    exec -T authelia authelia storage user totp generate "${AUTHELIA_USER}" \
+      --config /config/configuration.yml 2>&1)"
+  rc=$?
+  set -e
+
+  if [ "$rc" -ne 0 ]; then
+    # Idempotency: when re-running bootstrap after the enrollment file has
+    # been removed (e.g. by `git clean -fd` — it was previously untracked),
+    # Authelia's DB still holds the TOTP and `generate` refuses with
+    # "already has a TOTP configuration". The authenticator app is still
+    # paired and login still works — skip with a clear warning.
+    if printf '%s\n' "${OUTPUT}" | grep -qiE 'already has a TOTP'; then
+      log WARN "${AUTHELIA_USER} already has TOTP in Authelia's DB; ${ENROLL_FILE} is missing"
+      log WARN "your existing authenticator app keeps working — no action needed"
+      log WARN "to regenerate the QR/backup file (invalidates the current pairing):"
+      log WARN "  docker compose --project-name infra-authelia -f ${AUTHELIA_DIR}/docker-compose.yml exec authelia authelia storage user totp generate ${AUTHELIA_USER} --force --config /config/configuration.yml"
+    else
       log ERROR "authelia storage user totp generate failed:"
       printf '%s\n' "${OUTPUT}" >&2
       die "could not enroll TOTP for ${AUTHELIA_USER}"
-    }
+    fi
+  else
     OTPAUTH="$(printf '%s\n' "${OUTPUT}" | grep -oE 'otpauth://[^[:space:]]+' | head -1)"
     [ -n "${OTPAUTH}" ] || {
       log ERROR "could not extract otpauth URI; full CLI output:"
