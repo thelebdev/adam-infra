@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/common.sh"
 require_root
+load_env
 
 ADMIN="${SERVER_ADMIN_USER:-${SUDO_USER:-}}"
 # Fallback: owner of the repo checkout. `sudo -i` / `su -` can drop SUDO_USER,

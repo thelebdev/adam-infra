@@ -82,6 +82,7 @@ for token, value in (("__ADMIN_USER__", user), ("__ADMIN_HOME__", home),
 open(dst, "w").write(content)
 PYEOF
 chmod 644 "${UNIT}"
+write_version_json "${INFRA_ROOT}/platform/session-manager" "11-session-manager"
 log INFO "rendered ${UNIT} (user=${ADMIN}, workspace=${WORKSPACE_ROOT})"
 
 systemctl daemon-reload

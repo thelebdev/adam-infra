@@ -20,6 +20,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/common.sh"
 require_root
+load_env
 
 if [ -z "${PRIMARY_DOMAIN:-}" ]; then
   log WARN "PRIMARY_DOMAIN unset; skipping Authelia. Dashboards reachable only via SSH port-forward."

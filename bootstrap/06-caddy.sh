@@ -12,6 +12,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/common.sh"
 require_root
+# Self-load .env so the script is safe to run standalone (`sudo bash 06-caddy.sh`)
+# without going through the orchestrator. sudo strips the parent shell's env, so
+# without this PRIMARY_DOMAIN would be empty and the early-skip below would fire.
+load_env
 
 if [ -z "${PRIMARY_DOMAIN:-}" ]; then
   log WARN "PRIMARY_DOMAIN unset; skipping Caddy. Dashboards reachable only via SSH port-forward."
@@ -84,6 +88,7 @@ content = content.replace("__CADDY_ACME_EMAIL__", email)
 open(dst, "w").write(content)
 PYEOF
 chmod 644 "${CADDYFILE}"
+write_version_json "${CADDY_DIR}" "06-caddy"
 log INFO "rendered ${CADDYFILE} (disabled blocks:${disabled:-none})"
 
 # Strip any legacy Caddy basic-auth secrets from /opt/infra/.env — Authelia

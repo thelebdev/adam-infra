@@ -22,6 +22,7 @@ Environment=PATH=__ADMIN_HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/s
 Environment=SESSION_WORKSPACE_ROOT=__WORKSPACE_ROOT__
 Environment=SESSION_SOCKET_DIR=__SOCKET_DIR__
 Environment=SESSION_TMUX_CONF=__INFRA_ROOT__/platform/ttyd/session-tmux.conf
+Environment=INFRA_ROOT=__INFRA_ROOT__
 Environment=SM_LISTEN_ADDR=127.0.0.1
 Environment=SM_LISTEN_PORT=7682
 WorkingDirectory=__WORKSPACE_ROOT__

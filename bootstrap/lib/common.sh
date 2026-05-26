@@ -90,3 +90,26 @@ ensure_service() {
   systemctl is-active --quiet "${unit}" || die "service ${unit} failed to start"
   log INFO "service ${unit} active"
 }
+
+# Drop a `.version.json` sentinel next to a rendered artifact. The dashboard
+# reads these via /api/version to surface drift between the current git HEAD
+# and what was last rendered — the failure mode where a merged commit doesn't
+# match the live config is otherwise invisible.
+#
+# Usage: write_version_json <dir> <by>
+write_version_json() {
+  local dir="$1" by="$2" sha ts
+  sha="$(git -C "${INFRA_ROOT}" rev-parse --short=10 HEAD 2>/dev/null || echo unknown)"
+  if [ "${sha}" != "unknown" ] && \
+     ! { git -C "${INFRA_ROOT}" diff --quiet 2>/dev/null && \
+         git -C "${INFRA_ROOT}" diff --cached --quiet 2>/dev/null; }; then
+    sha="${sha}-dirty"
+  fi
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  install -d "${dir}"
+  cat > "${dir}/.version.json" <<EOF
+{"git_sha":"${sha}","rendered_at":"${ts}","by":"${by}"}
+EOF
+  chmod 644 "${dir}/.version.json"
+  log INFO "stamped ${dir}/.version.json (sha=${sha}, by=${by})"
+}

@@ -8,6 +8,7 @@ calls are faked). Run via tests/infra/run-tests.sh or:
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -200,6 +201,66 @@ class TmuxTests(WorkspaceTestCase):
         server._run = fake_run(returncode=0)
         server.kill_session("alice", "api")
         self.assertFalse(server._marker_path("alice", "api").exists())
+
+
+class VersionTests(unittest.TestCase):
+    """`read_version()` aggregates per-component `.version.json` stamps and
+    flags drift against the current git HEAD. The test fakes both the git
+    call and the on-disk component files so the assertions don't depend on
+    the test runner's git state."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self._orig_infra_root = server.INFRA_ROOT
+        server.INFRA_ROOT = self.root
+        self._orig_git_head = server._git_head_short
+        server._git_head_short = lambda: "abcd123456"
+        (self.root / "platform").mkdir()
+
+    def tearDown(self) -> None:
+        server.INFRA_ROOT = self._orig_infra_root
+        server._git_head_short = self._orig_git_head
+        self._tmp.cleanup()
+
+    def _stamp(self, comp: str, sha: str, ts: str = "2026-05-26T10:00:00Z") -> None:
+        comp_dir = self.root / "platform" / comp
+        comp_dir.mkdir(parents=True, exist_ok=True)
+        (comp_dir / ".version.json").write_text(
+            json.dumps({"git_sha": sha, "rendered_at": ts, "by": "test"}))
+
+    def test_all_in_sync(self) -> None:
+        for comp in server.VERSION_COMPONENTS:
+            self._stamp(comp, "abcd123456")
+        v = server.read_version()
+        self.assertEqual(v["git_sha"], "abcd123456")
+        self.assertFalse(v["drift"])
+        self.assertEqual(v["drifted_components"], [])
+
+    def test_stale_component_is_drift(self) -> None:
+        for comp in server.VERSION_COMPONENTS:
+            self._stamp(comp, "abcd123456")
+        self._stamp("caddy", "feedbeef00")  # stale
+        v = server.read_version()
+        self.assertTrue(v["drift"])
+        self.assertEqual(v["drifted_components"], ["caddy"])
+
+    def test_missing_component_is_drift(self) -> None:
+        for comp in server.VERSION_COMPONENTS:
+            if comp != "dashboard":
+                self._stamp(comp, "abcd123456")
+        v = server.read_version()
+        self.assertIn("dashboard", v["drifted_components"])
+        self.assertIsNone(v["components"]["dashboard"])
+
+    def test_dirty_suffix_ignored(self) -> None:
+        # `-dirty` suffix is added by write_version_json when the tree has
+        # uncommitted edits at render time. Stripping it on compare avoids a
+        # false drift for an operator's local tweak.
+        for comp in server.VERSION_COMPONENTS:
+            self._stamp(comp, "abcd123456-dirty")
+        v = server.read_version()
+        self.assertFalse(v["drift"])
 
 
 class SepTests(unittest.TestCase):

@@ -12,6 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/common.sh"
 require_root
+load_env
 
 if [ -z "${PRIMARY_DOMAIN:-}" ]; then
   log WARN "PRIMARY_DOMAIN unset; skipping ttyd (would have no public route anyway)."
@@ -139,6 +140,7 @@ for token, value in (("__ADMIN_USER__", user), ("__ADMIN_HOME__", home),
 open(dst, "w").write(content)
 PYEOF
 chmod 644 "${UNIT}"
+write_version_json "${INFRA_ROOT}/platform/ttyd" "07-ttyd"
 log INFO "rendered ${UNIT} (user=${ADMIN}, workspace=${WORKSPACE_ROOT})"
 
 systemctl daemon-reload

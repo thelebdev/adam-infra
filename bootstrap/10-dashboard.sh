@@ -11,6 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/common.sh"
 require_root
+load_env
 
 DASH_DIR="${INFRA_ROOT}/platform/dashboard"
 TEMPLATE="${DASH_DIR}/index.html.template"
@@ -93,5 +94,6 @@ content = content.replace("__PRIMARY_DOMAIN__", domain)
 open(dst, "w").write(content)
 PYEOF
 chmod 644 "${OUT}"
+write_version_json "${DASH_DIR}" "10-dashboard"
 log INFO "rendered platform dashboard -> ${OUT} (profile=${PROFILE})"
 log INFO "dashboard served by Caddy at https://${PRIMARY_DOMAIN} and https://${SUBDOMAIN_DASHBOARD}.${PRIMARY_DOMAIN}"

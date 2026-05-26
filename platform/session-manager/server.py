@@ -37,8 +37,13 @@ WORKSPACE_ROOT = Path(os.environ.get("SESSION_WORKSPACE_ROOT", HOME / "workspace
 SOCKET_DIR = Path(os.environ.get("SESSION_SOCKET_DIR", HOME / ".terminal-sessions"))
 TMUX_CONF = Path(os.environ.get(
     "SESSION_TMUX_CONF", "/opt/infra/platform/ttyd/session-tmux.conf"))
+INFRA_ROOT = Path(os.environ.get("INFRA_ROOT", "/opt/infra"))
 LISTEN_ADDR = os.environ.get("SM_LISTEN_ADDR", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("SM_LISTEN_PORT", "7682"))
+
+# Components that drop a `.version.json` after rendering. Read by /api/version
+# to surface drift between the current git HEAD and what's actually deployed.
+VERSION_COMPONENTS = ("caddy", "ttyd", "dashboard", "session-manager")
 
 # A session name: 1–32 chars, starts alphanumeric, then alphanumeric / _ / -.
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
@@ -148,6 +153,49 @@ def cmd_argv(label: str) -> list[str]:
     if label == "claude":
         return ["claude"]
     raise ApiError(400, f"unknown command '{label}'")
+
+
+def _git_head_short() -> str:
+    """Current short HEAD of the infra repo, or 'unknown' if git fails."""
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(INFRA_ROOT), "rev-parse", "--short=10", "HEAD"],
+            capture_output=True, text=True, timeout=2, check=False)
+        sha = res.stdout.strip()
+        return sha or "unknown"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return "unknown"
+
+
+def read_version() -> dict[str, Any]:
+    """Aggregate per-component .version.json stamps with the current git HEAD.
+
+    `drift` is True if any rendered component's sha doesn't match HEAD — i.e.,
+    a commit landed in the repo but the corresponding render step didn't
+    actually re-run. The `dirty` suffix added by write_version_json is stripped
+    before comparison so an uncommitted local edit doesn't trigger false drift.
+    """
+    head = _git_head_short()
+    components: dict[str, Any] = {}
+    drifted: list[str] = []
+    for comp in VERSION_COMPONENTS:
+        path = INFRA_ROOT / "platform" / comp / ".version.json"
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            components[comp] = None
+            drifted.append(comp)
+            continue
+        components[comp] = data
+        comp_sha = str(data.get("git_sha", "")).split("-", 1)[0]
+        if head != "unknown" and comp_sha and comp_sha != head:
+            drifted.append(comp)
+    return {
+        "git_sha": head,
+        "components": components,
+        "drift": bool(drifted),
+        "drifted_components": drifted,
+    }
 
 
 def claude_installed() -> bool:
@@ -356,6 +404,13 @@ class Handler(BaseHTTPRequestHandler):
                     "commands": list(CMD_ALLOWLIST),
                     "claude_installed": claude_installed(),
                 })
+                return
+            if method == "GET" and path == "/api/version":
+                # Unauthenticated: surfaces the deploy state (git HEAD + each
+                # render step's last stamp). The dashboard reads this on every
+                # page load to render the footer and flag config drift, so it
+                # needs to work even before user-specific data resolves.
+                self._send_json(200, read_version())
                 return
             user = self._identity()
             if method == "GET" and path == "/api/sessions":

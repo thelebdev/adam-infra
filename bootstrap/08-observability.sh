@@ -11,6 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/common.sh"
 require_root
+load_env
 
 PROFILE="${OBSERVABILITY_PROFILE:-lightweight}"
 COMPOSE_DIR="${INFRA_ROOT}/platform/observability"

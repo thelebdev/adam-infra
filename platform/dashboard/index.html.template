@@ -146,6 +146,12 @@
     background: #2a1416; border: 1px solid #5c2a2a;
     border-radius: 8px; padding: .55rem .75rem; margin-bottom: .8rem;
   }
+  .banner.drift {
+    color: var(--yellow);
+    background: #2a2414; border-color: #5c4a2a;
+    margin-top: 1.5rem;
+  }
+  .banner.drift strong { color: var(--yellow); }
   .muted { color: var(--muted); }
   .pad { padding: .8rem .35rem; font-size: .9rem; }
 
@@ -413,9 +419,61 @@
     </div>
   </section>
 
+  <div class="banner drift" id="drift-banner" hidden></div>
+
   <footer>
-    Platform layer · gated by Authelia SSO · served by Caddy.
+    Platform layer · gated by Authelia SSO · served by Caddy.<br>
+    <span id="version-info" class="muted">version: <span class="mono">loading…</span></span>
   </footer>
+  <script>
+  (function () {
+    "use strict";
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+      });
+    }
+    function shortTs(ts) {
+      // "2026-05-26T10:30:00Z" -> "2026-05-26 10:30Z"
+      if (!ts || typeof ts !== "string") return "";
+      return ts.replace("T", " ").replace(/:\d\d(?=Z|\+|-|$)/, "");
+    }
+    fetch("/api/version", { headers: { "Accept": "application/json" } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var info = document.getElementById("version-info");
+        if (!info) return;
+        var head = '<span class="mono">' + esc(d.git_sha || "?") + '</span>';
+        var comps = d.components || {};
+        var rows = [];
+        Object.keys(comps).forEach(function (k) {
+          var c = comps[k];
+          if (c) {
+            var sha = String(c.git_sha || "?").split("-")[0].slice(0, 7);
+            rows.push(esc(k) + " " + sha + " @ " + esc(shortTs(c.rendered_at)));
+          } else {
+            rows.push(esc(k) + " <em>never rendered</em>");
+          }
+        });
+        info.innerHTML = "version: " + head + " &middot; " + rows.join(" &middot; ");
+        if (d.drift) {
+          var w = document.getElementById("drift-banner");
+          if (w) {
+            w.hidden = false;
+            w.innerHTML = "<strong>Configuration drift.</strong> "
+              + "These components were rendered against an older commit than the current HEAD ("
+              + esc(d.git_sha) + "): <span class=\"mono\">"
+              + esc((d.drifted_components || []).join(", "))
+              + "</span>. Re-run <span class=\"mono\">sudo ./bootstrap/bootstrap.sh</span> on the server.";
+          }
+        }
+      })
+      .catch(function () {
+        var info = document.getElementById("version-info");
+        if (info) info.textContent = "version: (unavailable)";
+      });
+  })();
+  </script>
 </div>
 </body>
 </html>

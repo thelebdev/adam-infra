@@ -8,6 +8,23 @@ Each entry: date, mode (Maintain / Manage / Create), one-line summary.
 
 ## Entries
 
+- **2026-05-26** — Maintain — **Version surface + standalone-safe render
+  steps.** Two related changes that together prevent a silent failure
+  mode: a merged commit doesn't match the live config because a render
+  step didn't actually run. Each render script (`06-caddy`, `07-ttyd`,
+  `10-dashboard`, `11-session-manager`) now stamps a sibling
+  `.version.json` next to its artifact via the new `write_version_json`
+  helper in `lib/common.sh`. The session-manager API exposes
+  `GET /api/version` (unauthenticated): current git HEAD plus each
+  component's last-render sha and timestamp plus a `drift` flag. The
+  dashboard footer shows the rendered versions inline and a yellow
+  drift banner above the footer if anything's stale. Separately,
+  numbered scripts that read `.env` (05, 06, 07, 09, 10, 01, 02, 08)
+  now self-`load_env` so they're safe to run via
+  `sudo bash bootstrap/0X-thing.sh` directly — sudo otherwise strips
+  the parent shell's env, the script sees `PRIMARY_DOMAIN=""` and
+  silently exits via the early-skip branch (the bug that left the
+  Caddyfile stale after the per-app gate fix in PR #8).
 - **2026-05-25** — Maintain — The browser terminal stack is now
   **command-agnostic**: each session runs either a login shell (default) or
   Claude Code. The subdomain moves from `claude.<domain>` to
