@@ -205,6 +205,139 @@ routing.
 
 ---
 
+## Troubleshooting
+
+Real things that have bitten operators on the first run. Each entry is
+symptom → cause → fix.
+
+### Locked out of `sudo` right after bootstrap
+
+**Symptom:** `sudo` from the admin user rejects every guess; `sudo: a password
+is required` with no path forward.
+
+**Cause:** if the admin user was created with `useradd -m` and never had a
+password set, the account has none. `01-user-and-ssh.sh` then disables root
+SSH (`PermitRootLogin no`), so there is no remote root path to set the admin
+password and no admin-side credential to satisfy `sudo`.
+
+**Fix:** open the provider's serial / VNC console (Hetzner: Cloud Console;
+Contabo: VNC button on the VPS detail page; equivalent for your provider),
+log in as `root` with the provider's initial password, run
+`passwd <SERVER_ADMIN_USER>`, save the new password to your secret store,
+exit. SSH back in as the admin user — `sudo` now works.
+
+**Prevent:** set the admin user's password **before** running bootstrap, or
+configure a `NOPASSWD` sudoers rule (single-admin boxes only).
+
+### `09-claude-code.sh` fails with `EACCES: permission denied, mkdir '/home/<admin>/.local/state'`
+
+**Symptom:** Bootstrap halts mid-orchestrator with `Installation failed` /
+`EACCES` from the Claude installer.
+
+**Cause:** An earlier step (notably `07-ttyd.sh` placing files in
+`~/.local/bin`) runs as root and creates `/home/<admin>/.local/` owned by
+root. Step 09 then runs `claude install` as the admin user, which can't
+`mkdir` inside the root-owned dir.
+
+**Fix:** `sudo chown -R <admin>:<admin> /home/<admin>/.local /home/<admin>/.cache /home/<admin>/.claude /home/<admin>/.claude.json`,
+then `sudo bash /opt/infra/bootstrap/bootstrap.sh` to resume (idempotent).
+
+### Admin user not in `docker` group after bootstrap
+
+**Symptom:** `docker ps` as the admin user returns
+`permission denied while trying to connect to the docker API`.
+
+**Cause:** `01-user-and-ssh.sh` tries `usermod -aG docker <admin> || true`,
+but the `docker` group doesn't exist yet — it's created by `04-docker.sh`.
+The conditional silently no-ops.
+
+**Fix:** `sudo usermod -aG docker <admin>`, then log out and back in (or
+`newgrp docker` in the existing session).
+
+### Grafana shows its own login screen after Authelia (full profile)
+
+**Symptom:** SSO succeeds, but `grafana.<domain>` lands on the Grafana login
+form asking for `admin` / password.
+
+**Cause:** Caddy forwards `Remote-User`, `Remote-Groups`, etc. from Authelia,
+but Grafana isn't configured to trust them out of the box, so it falls back
+to its own auth.
+
+**Fix:** add to the `grafana` service `environment:` block in
+`platform/observability/docker-compose.full.yml`:
+
+```yaml
+GF_AUTH_PROXY_ENABLED: "true"
+GF_AUTH_PROXY_HEADER_NAME: "Remote-User"
+GF_AUTH_PROXY_HEADER_PROPERTY: "username"
+GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+GF_AUTH_PROXY_HEADERS: "Email:Remote-Email Name:Remote-Name Groups:Remote-Groups"
+GF_AUTH_PROXY_WHITELIST: "127.0.0.1,172.16.0.0/12,::1"
+GF_AUTH_DISABLE_LOGIN_FORM: "true"
+```
+
+Then `sudo docker compose --project-name infra-observability --env-file /opt/infra/.env -f /opt/infra/platform/observability/docker-compose.full.yml up -d --force-recreate grafana`.
+
+### `admin` + the password in `.env` doesn't log into Grafana
+
+**Symptom:** the `GRAFANA_ADMIN_PASSWORD` value from `.env` is rejected at
+the Grafana login form, even though it's the value the env was generated
+with.
+
+**Cause:** `GF_SECURITY_ADMIN_PASSWORD` is only honored on the **first** init
+of the `grafana_data` volume. Subsequent changes to `.env` don't propagate
+into Grafana's stored DB.
+
+**Fix:** `sudo docker exec grafana grafana-cli admin reset-admin-password "$(sudo grep '^GRAFANA_ADMIN_PASSWORD=' /opt/infra/.env | cut -d= -f2-)"`.
+Now `.env` and the stored password match.
+
+### Bootstrap completes, but a subdomain serves a Caddy default cert (not Let's Encrypt)
+
+**Symptom:** `https://<sub>.<domain>` shows a browser cert warning; `curl -v`
+shows the default self-signed Caddy cert.
+
+**Cause:** the ACME HTTP-01 challenge needs the subdomain's A record to
+resolve to **this** server. If DNS still points elsewhere (cutover in
+progress, record missing, propagation delay), Caddy retries silently and
+never gets a real cert.
+
+**Fix:**
+```bash
+for sub in auth dashboard sessions grafana; do
+  printf "%-30s -> " "$sub.<domain>"; dig +short @8.8.8.8 "$sub.<domain>" A
+done
+```
+Every line should show this server's IP. Once DNS is correct,
+`sudo systemctl restart caddy` or just wait (Caddy retries with backoff).
+
+**Pre-flight:** run that `dig` check **before** bootstrap. Each failed ACME
+attempt counts against Let's Encrypt's per-hostname rate limit (5/hour).
+
+### Cutover collision — re-using a `PRIMARY_DOMAIN` already live on another server
+
+**Symptom:** Bootstrap finishes cleanly, but `https://auth.<domain>` still
+serves the OLD server. ACME cert issuance loops silently on the new box.
+
+**Cause:** the DNS A records still point at the old server. Bootstrap
+doesn't detect this — it brings Caddy up, Caddy can't prove control of the
+hostname, ACME loops in the background.
+
+**Sequence:**
+1. Lower TTLs on the affected subdomain records to ~60s (do this ≥ 24h before
+   cutover if your registrar caches aggressively).
+2. Bootstrap the new box with `PRIMARY_DOMAIN=<domain>` set. Caddy comes up
+   listening on 80/443.
+3. Flip the DNS A records (`auth`, `dashboard`, `sessions`, `grafana`, plus
+   the apex if you use it) to the new server's IP.
+4. Within minutes (after propagation) Caddy issues fresh certs.
+5. Plan separately what happens to any application state or non-platform
+   apps on the old box — they don't migrate themselves.
+
+A migration runbook for stateful platform components (Authelia user DB, TOTP
+enrollment) lives in `docs/DISASTER_RECOVERY.md` (operator-local).
+
+---
+
 ## Repo layout
 
 - [`bootstrap/`](bootstrap/) — ordered scripts (`00`–`10`, `99-verify`) + `bootstrap.sh` orchestrator.
