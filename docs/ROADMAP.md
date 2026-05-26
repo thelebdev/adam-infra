@@ -94,44 +94,18 @@ session-manager and the marker logic are fine; the failure is purely in
 Caddy forwarding the verified identity to `/api/*` inside the dashboard
 block.
 
-### Bubblewrap-confined shell sessions with break-out
+### Bubblewrap-confined shell sessions with break-out (DELIVERED 2026-05-26)
 
-By default, a shell session opened from `sessions.<domain>` should run
-inside a `bwrap` jail: only `~/workspace` and `/tmp` writable; HOME a
-tmpfs; system binaries read-only. Non-sudo commands work normally inside
-the jail — but `cd /etc`, `cat ~/.ssh/id_*`, etc. fail.
+Browser shell sessions now run inside a `bwrap` jail: rootfs read-only,
+homes tmpfs, only `~/workspace` writable. `sudo break` (sudo password +
+Authelia TOTP) replaces the calling pane's process with an unconfined
+`bash -l` via `tmux respawn-pane`. Claude sessions skip the jail (cmd=
+claude → unconfined `claude`). See CHANGELOG 2026-05-26.
 
-Two ways to break out of the bwrap into a regular shell:
-
-1. **`sudo break`** — a setuid helper installed inside the sandbox. Asks
-   for the sudo password (validates via `sudo -v`), then prompts in the
-   CLI for the user's 6-digit Authelia TOTP. The TOTP is validated against
-   the secret in Authelia's SQLite store via
-   `authelia storage user totp export`. On success, signals the session's
-   supervisor (in the parent tmux session) to swap the bwrap'd shell for
-   a regular `bash -l`. On failure (wrong TOTP, timeout), stays inside
-   the jail.
-2. **Starting Claude as the session command** — choosing "Claude Code" in
-   the dashboard's new-session form skips the bwrap entirely. Claude
-   needs `~/.claude/credentials.json`, the user's git config, write access
-   to project files outside the workspace tree, etc. Trying to bind-mount
-   each of those into a bwrap creates more attack surface than just
-   running Claude outside it.
-
-Implementation notes:
-- bwrap is Ubuntu-native (`apt install bubblewrap`).
-- A "supervisor" pattern is required because you can't escape your own
-  bwrap from inside: the parent tmux pane runs a small supervisor that
-  spawns either bwrap'd `bash` or plain `bash`, and switches on signal.
-- The TOTP validation needs root (to read Authelia's encrypted SQLite
-  store), which is exactly what `sudo` gives us via the setuid path.
-- Authelia doesn't support push notifications natively — the CLI flow
-  asks the user to type the TOTP code from their authenticator app, same
-  as the web login. A real "tap to approve on phone" flow would need a
-  separate channel (ntfy, webhook, etc.) — not in scope for v1.
-
-**Status.** Not started. Sketch lives in this session's context. Land
-after the carry-over above is resolved.
+Implementation cleared up one design assumption: a separate "supervisor"
+process turned out to be unnecessary. `tmux respawn-pane` already
+spawns the new process in tmux's context (outside the bwrap), so the
+pane simply *becomes* unconfined — same window, same scrollback.
 
 ### Per-app Authelia gate toggle in the dashboard
 

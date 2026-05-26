@@ -1,0 +1,17 @@
+# Sudoers fragment for the `break` command (rendered to /etc/sudoers.d/break
+# by bootstrap/07-ttyd.sh with __ADMIN_USER__ substituted).
+#
+# The whole point of `break` is to escape the bubblewrap jail with a strong
+# proof-of-identity gate. The gate is: sudo password (this fragment) + a
+# fresh Authelia TOTP code (validated by /usr/local/sbin/break itself).
+#
+# `Defaults!break timestamp_timeout=0` makes sudo prompt for the password on
+# every single invocation, ignoring the usual ~5 minute credential cache.
+# Without it, a user who recently sudo'd anything else could `sudo break`
+# without re-typing a password — degrading the gate to TOTP-only.
+#
+# We deliberately do NOT add NOPASSWD or any path-globbing convenience —
+# only the literal /usr/local/sbin/break is allowed, and only with PASSWD.
+
+Defaults!/usr/local/sbin/break timestamp_timeout=0
+__ADMIN_USER__ ALL=(ALL) PASSWD: /usr/local/sbin/break

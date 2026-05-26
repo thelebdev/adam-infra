@@ -85,10 +85,19 @@ resolve_shell() {
 
 # Resolve a session command label to the argv tmux should run. Echoes one
 # argument per line so the caller can read into an array.
+#
+# `shell` runs inside a bubblewrap jail (/usr/local/bin/sandbox-shell does
+# the heavy lifting + computes the inside-jail cwd from $1) so accidental
+# `cd /etc; rm -rf .` from the browser can't reach the host. `sudo break`
+# (TOTP-gated) is the only way out — see platform/ttyd/break.py.
+#
+# `claude` runs unconfined: Claude needs the host's ~/.claude credentials,
+# git config, ssh keys, write access to project files, etc. — bind-mounting
+# every one of those into the jail would defeat the point.
 resolve_cmd_argv() {
-  local label="${1-}"
+  local label="${1-}" dir="${2-}"
   case "$label" in
-    shell)  printf '%s\n' "$(resolve_shell)" "-l" ;;
+    shell)  printf '%s\n' /usr/local/bin/sandbox-shell "${dir:-${WORKSPACE_ROOT}}" ;;
     claude) printf 'claude\n' ;;
     *) return 1 ;;
   esac
@@ -185,7 +194,7 @@ open_session() {
   local name="$1" dir="${2:-$WORKSPACE_ROOT}" label="${3:-$CMD_DEFAULT}"
   if ! valid_cmd "$label"; then label="$CMD_DEFAULT"; fi
   local argv=() line
-  while IFS= read -r line; do argv+=("$line"); done < <(resolve_cmd_argv "$label")
+  while IFS= read -r line; do argv+=("$line"); done < <(resolve_cmd_argv "$label" "$dir")
   if ! tm has-session -t "=$name" 2>/dev/null; then
     if [ -n "${SESSION_DRYRUN:-}" ]; then
       printf 'CREATE %s %s %s\n' "$name" "$dir" "$label"; return 0

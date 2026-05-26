@@ -8,6 +8,41 @@ Each entry: date, mode (Maintain / Manage / Create), one-line summary.
 
 ## Entries
 
+- **2026-05-26** — Create — **Sandboxed shell sessions with TOTP-gated
+  break-out.** Browser shell sessions now run inside a `bubblewrap` jail
+  by default. The jail mounts the host root read-only, hides every
+  user's home with a tmpfs, and bind-mounts only `~/workspace` writable.
+  Accidental `cd /etc; rm -rf .` from the browser can't reach the host;
+  SSH keys at `~/.ssh`, GPG keys at `~/.gnupg`, secrets at `~/.config`
+  are invisible from inside.
+  
+  The escape valve is `sudo break`, with two factors required:
+  1. The operator's host sudo password (forced every invocation via
+     `Defaults!break timestamp_timeout=0` so a stale 5-minute sudo cache
+     can never substitute).
+  2. A fresh 6-digit Authelia TOTP code, validated locally against the
+     encrypted secret in Authelia's SQLite store (AES-256-GCM with
+     SHA-256(storage_key) as the key — same encryption Authelia itself
+     uses on login).
+  
+  On success, `break` invokes `tmux respawn-pane` to replace the calling
+  pane's process with an unconfined `bash -l`. The replacement is spawned
+  by tmux (outside the jail), so the pane *becomes* unconfined — same
+  window, same scrollback, no new tab.
+  
+  Claude sessions (cmd=claude) deliberately skip the jail: Claude needs
+  `~/.claude/credentials.json`, git config, ssh keys, and write access to
+  project files. Bind-mounting every one would defeat the point. The
+  dashboard's command picker still defaults to "shell" — Claude is opt-in.
+  
+  New files: `platform/ttyd/sandbox-shell` (bwrap launcher),
+  `platform/ttyd/break.py` (TOTP-gated breakout),
+  `platform/ttyd/break.sudoers.template`. 07-ttyd.sh now
+  `apt_ensure`s `bubblewrap` + `python3-cryptography`, installs the
+  helpers, and renders + validates (`visudo -cf`) the sudoers fragment
+  before moving it into place. 15 new break.py unit tests cover the
+  TOTP arithmetic (RFC 6238 vectors, ±1 window skew tolerance, input
+  validation, username resolution order).
 - **2026-05-26** — Maintain — **Version surface + standalone-safe render
   steps.** Two related changes that together prevent a silent failure
   mode: a merged commit doesn't match the live config because a render

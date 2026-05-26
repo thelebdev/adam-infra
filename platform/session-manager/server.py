@@ -145,11 +145,21 @@ def resolve_shell() -> str:
     return shell if shell in SAFE_SHELLS else "/bin/bash"
 
 
-def cmd_argv(label: str) -> list[str]:
+def cmd_argv(label: str, target: Path | None = None) -> list[str]:
     """Resolve a command label to the argv tmux should spawn. Raises
-    ApiError(400) for an unknown label — the allowlist is the boundary."""
+    ApiError(400) for an unknown label — the allowlist is the boundary.
+
+    `target` is the (already-confined) per-session project directory; for
+    shell sessions it's passed to ``sandbox-shell`` which translates it into
+    the equivalent path inside the bubblewrap jail.
+
+    `shell` runs inside ``/usr/local/bin/sandbox-shell`` (a bubblewrap jail);
+    `claude` runs unconfined because Claude needs ~/.claude, git config, and
+    write access to project files — see platform/ttyd/sandbox-shell.
+    """
     if label == "shell":
-        return [resolve_shell(), "-l"]
+        target_str = str(target if target is not None else WORKSPACE_ROOT)
+        return ["/usr/local/bin/sandbox-shell", target_str]
     if label == "claude":
         return ["claude"]
     raise ApiError(400, f"unknown command '{label}'")
@@ -319,7 +329,7 @@ def create_session(user: str, name: str, req_dir: str,
     except OSError as exc:
         raise ApiError(500, f"cannot create {target}") from exc
     write_marker(user, name, cmd)
-    argv = cmd_argv(cmd)
+    argv = cmd_argv(cmd, target)
     res = _run(_tmux_base(user) + ["new-session", "-d", "-s", name,
                                    "-c", str(target), "--", *argv])
     if res.returncode != 0:

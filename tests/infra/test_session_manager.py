@@ -279,13 +279,22 @@ class SepTests(unittest.TestCase):
 
 
 class CmdArgvTests(unittest.TestCase):
-    def test_shell_argv_has_login_flag(self) -> None:
+    def test_shell_argv_invokes_sandbox(self) -> None:
+        # `shell` sessions must run inside the bubblewrap jail launched by
+        # /usr/local/bin/sandbox-shell; never spawn an unconfined bash directly.
+        argv = server.cmd_argv("shell", Path("/home/adam/workspace/api"))
+        self.assertEqual(argv[0], "/usr/local/bin/sandbox-shell")
+        self.assertEqual(argv[1], "/home/adam/workspace/api")
+        self.assertNotIn("bash", argv)
+
+    def test_shell_argv_defaults_to_workspace_root(self) -> None:
         argv = server.cmd_argv("shell")
-        self.assertEqual(len(argv), 2)
-        self.assertEqual(argv[1], "-l")
-        self.assertTrue(argv[0].startswith("/"))
+        self.assertEqual(argv[0], "/usr/local/bin/sandbox-shell")
+        self.assertEqual(argv[1], str(server.WORKSPACE_ROOT))
 
     def test_claude_argv(self) -> None:
+        # `claude` is the deliberate escape valve — runs unconfined because
+        # Claude needs ~/.claude credentials, git config, ssh keys, etc.
         self.assertEqual(server.cmd_argv("claude"), ["claude"])
 
     def test_unknown_label_rejected(self) -> None:

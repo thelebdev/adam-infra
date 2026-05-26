@@ -56,7 +56,17 @@ nope valid_cmd "rm"
 nope valid_cmd "shell;evil"
 
 echo "resolve_cmd_argv:"
-eq "shell argv has 2 lines"  "2"      "$(resolve_cmd_argv shell | wc -l | tr -d ' ')"
+# `shell` sessions must launch via /usr/local/bin/sandbox-shell so they run
+# inside the bwrap jail — never spawn an unconfined bash directly.
+eq "shell argv[0] is sandbox-shell" \
+   "/usr/local/bin/sandbox-shell" \
+   "$(resolve_cmd_argv shell "$WS/proj-a" | head -1)"
+eq "shell argv[1] is the requested dir" \
+   "$WS/proj-a" \
+   "$(resolve_cmd_argv shell "$WS/proj-a" | sed -n 2p)"
+eq "shell argv defaults dir to workspace root" \
+   "$WS" \
+   "$(resolve_cmd_argv shell | sed -n 2p)"
 eq "claude argv is 'claude'" "claude" "$(resolve_cmd_argv claude)"
 nope resolve_cmd_argv bogus
 

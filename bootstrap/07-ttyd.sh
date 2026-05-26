@@ -43,7 +43,13 @@ ADMIN_HOME="$(getent passwd "${ADMIN}" | cut -d: -f6)"
 # Install ttyd + tmux from Ubuntu universe. tmux is what makes the browser
 # sessions persistent: the session helper runs commands inside it, so a
 # refresh or a dropped connection never kills a session.
-apt_ensure ttyd tmux
+#
+# bubblewrap   — `shell` sessions run inside a bwrap jail so an accidental
+#                `cd /etc; rm -rf .` from the browser doesn't reach the host.
+# python3-cryptography — used by /usr/local/sbin/break to validate the
+#                operator's Authelia TOTP code against the encrypted secret
+#                in Authelia's SQLite store (the "TOTP gate" for break-out).
+apt_ensure ttyd tmux bubblewrap python3-cryptography
 
 # Ubuntu's ttyd package ships /usr/lib/systemd/system/ttyd.service which is
 # auto-enabled and runs `ttyd -i lo -p 7681 -O login` as root — i.e. a
@@ -79,6 +85,42 @@ log INFO "installed session helper for ${ADMIN} (from ${HELPER_SRC})"
 # Clean up the old helper name if present, so the admin's PATH only sees the
 # new command.
 rm -f "${ADMIN_HOME}/.local/bin/claude-session"
+
+# sandbox-shell — the bwrap launcher invoked by `session` when cmd=shell.
+# Lives in /usr/local/bin so any OS user can exec it (it's the entry point
+# for the jail, not the privileged escape route).
+SANDBOX_SRC="${INFRA_ROOT}/platform/ttyd/sandbox-shell"
+[ -f "${SANDBOX_SRC}" ] || die "missing ${SANDBOX_SRC}"
+install -m 755 -o root -g root "${SANDBOX_SRC}" /usr/local/bin/sandbox-shell
+log INFO "installed /usr/local/bin/sandbox-shell"
+
+# break — the TOTP-gated "exit the sandbox" helper. Lives in /usr/local/sbin
+# (root-only territory) and is invoked exclusively via `sudo break`. The
+# sudoers fragment below pins it to `PASSWD: /usr/local/sbin/break` with a
+# zero timestamp_timeout, so the operator's sudo password is required every
+# single time — never cached from a recent sudo elsewhere.
+BREAK_SRC="${INFRA_ROOT}/platform/ttyd/break.py"
+[ -f "${BREAK_SRC}" ] || die "missing ${BREAK_SRC}"
+install -m 755 -o root -g root "${BREAK_SRC}" /usr/local/sbin/break
+log INFO "installed /usr/local/sbin/break"
+
+# Sudoers fragment for `sudo break`. Render with the admin username
+# substituted, validate with `visudo -cf` BEFORE moving it into place so a
+# malformed fragment never wedges sudo.
+SUDOERS_SRC="${INFRA_ROOT}/platform/ttyd/break.sudoers.template"
+[ -f "${SUDOERS_SRC}" ] || die "missing ${SUDOERS_SRC}"
+SUDOERS_TMP="$(mktemp)"
+trap 'rm -f "${SUDOERS_TMP}"' EXIT
+sed "s/__ADMIN_USER__/${ADMIN}/g" "${SUDOERS_SRC}" > "${SUDOERS_TMP}"
+chmod 0440 "${SUDOERS_TMP}"
+if visudo -cf "${SUDOERS_TMP}" >/dev/null; then
+  install -m 0440 -o root -g root "${SUDOERS_TMP}" /etc/sudoers.d/break
+  log INFO "installed /etc/sudoers.d/break (operator=${ADMIN})"
+else
+  die "rendered break.sudoers failed visudo validation; refusing to install"
+fi
+trap - EXIT
+rm -f "${SUDOERS_TMP}"
 
 # Resolve WORKSPACE_ROOT: the directory tree that holds the projects browser
 # sessions may open in. Every session is confined to this tree — it can
