@@ -33,3 +33,8 @@ docs/*
 
 # Local Claude Code settings (machine-specific, not part of the brief's structure)
 .claude/settings.local.json
+
+# Per-operator deny patterns for the Claude skills scanner. Each operator
+# lists their own personal identifiers locally; the list itself never lands
+# in the public repo.
+security/scan-claude-skills.deny

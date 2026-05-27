@@ -1,0 +1,18 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "input=$(cat); cwd=$(echo \"$input\" | jq -r '.workspace.current_dir // .cwd // \"\"'); dir=$(basename \"$cwd\"); model=$(echo \"$input\" | jq -r '.model.display_name // \"\"'); used=$(echo \"$input\" | jq -r '.context_window.used_percentage // empty'); git_branch=\"\"; if git -C \"$cwd\" rev-parse --git-dir > /dev/null 2>&1; then git_branch=$(git -C \"$cwd\" -c core.useBuiltinFSMonitor=false symbolic-ref --short HEAD 2>/dev/null || git -C \"$cwd\" rev-parse --short HEAD 2>/dev/null); fi; CYAN='\\033[0;36m'; RED='\\033[0;31m'; BLUE='\\033[1;34m'; DIM='\\033[2m'; RESET='\\033[0m'; line=\"$(printf \"${CYAN}%s${RESET}\" \"$dir\")\"; [ -n \"$git_branch\" ] && line=\"$line $(printf \"${BLUE}git:(${RED}%s${BLUE})${RESET}\" \"$git_branch\")\"; [ -n \"$model\" ] && line=\"$line $(printf \"${DIM}%s${RESET}\" \"$model\")\"; if [ -n \"$used\" ]; then used_int=$(printf '%.0f' \"$used\"); if [ \"$used_int\" -ge 80 ]; then C='\\033[0;31m'; elif [ \"$used_int\" -ge 50 ]; then C='\\033[0;33m'; else C='\\033[2m'; fi; line=\"$line $(printf \"${C}ctx:%d%%${RESET}\" \"$used_int\")\"; fi; printf \"%b\\n\" \"$line\""
+  },
+  "enabledPlugins": {
+    "vercel@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    }
+  },
+  "skipAutoPermissionPrompt": true
+}

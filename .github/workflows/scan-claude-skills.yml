@@ -1,0 +1,24 @@
+name: scan-claude-skills
+
+on:
+  pull_request:
+    paths:
+      - "platform/claude/**"
+      - "security/scan-claude-skills.sh"
+      - ".github/workflows/scan-claude-skills.yml"
+  push:
+    branches: [main]
+    paths:
+      - "platform/claude/**"
+      - "security/scan-claude-skills.sh"
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run secret + PII scan
+        run: ./security/scan-claude-skills.sh

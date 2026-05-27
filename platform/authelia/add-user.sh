@@ -86,3 +86,19 @@ echo "  ${URI}"
 echo
 echo "Done. Authelia picks up '${USERNAME}' within 5 minutes (refresh_interval)."
 echo "They log in at https://auth.<your-domain> with the password + a TOTP code."
+
+# If this Authelia user also happens to have a Linux home directory, deploy
+# the Claude skills bundle for them. Otherwise note that the platform side
+# is purely a web-auth user — to also give them a shell + skills, create a
+# Linux account and re-run bootstrap/12-claude-skills.sh.
+DEPLOYER="${INFRA_ROOT}/bootstrap/12-claude-skills.sh"
+if [ -x "${DEPLOYER}" ] && getent passwd "${USERNAME}" >/dev/null 2>&1; then
+  echo
+  echo "Linux account for '${USERNAME}' detected — deploying Claude skills."
+  "${DEPLOYER}"
+else
+  echo
+  echo "Note: '${USERNAME}' is currently a web-auth user only (no Linux home)."
+  echo "To deploy Claude Code skills for this user, create their Linux account"
+  echo "and re-run: sudo ${DEPLOYER}"
+fi

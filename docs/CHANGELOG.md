@@ -8,6 +8,30 @@ Each entry: date, mode (Maintain / Manage / Create), one-line summary.
 
 ## Entries
 
+- **2026-05-27** — Create — **Claude skills, commands, and starter
+  templates deployed per operator.** New `platform/claude/` holds the
+  publishable skill library (28 skills under `skills/`, 3 commands under
+  `commands/`) plus sanitized `CLAUDE.md.example` and
+  `settings.json.example` templates. The new bootstrap step
+  `12-claude-skills.sh` (gated by `INSTALL_CLAUDE_SKILLS`, defaults on)
+  walks the target user set — `SERVER_ADMIN_USER` always, plus any
+  Authelia user from `users_database.yml` that also has a Linux home
+  directory — and for each: creates `~/.claude/` mode 700, symlinks
+  every skill and command into `~/.claude/skills/` and `~/.claude/commands/`
+  pointing back at the repo (so `git pull` rolls updates instantly), and
+  copies `CLAUDE.md` + `settings.json` from the example templates
+  **only when absent**. Existing real files and user-modified directories
+  are never clobbered — a stale symlink is replaced, a real path is
+  preserved with a WARN log. `add-user.sh` runs the deployer
+  automatically when the new Authelia user happens to also have a Linux
+  account. A secret-and-PII scanner (`security/scan-claude-skills.sh`)
+  guards `platform/claude/` against personal identifiers, API keys,
+  private key blocks, public IPs, and an operator-local deny list
+  (`security/scan-claude-skills.deny`, gitignored); a GitHub Actions
+  workflow runs it on every PR that touches the directory. Pure-function
+  unit tests under `tests/infra/test_claude_skills_deploy.sh` pin the
+  link / copy / idempotency semantics.
+
 - **2026-05-27** — Create — **Drag-and-drop file upload into browser
   sessions.** New `POST /api/upload` on the session-manager service
   accepts multipart bodies up to 25 MiB and writes them to

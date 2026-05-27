@@ -31,6 +31,7 @@ select_components() {
     "INSTALL_NTOPNG|ntopng (network traffic, ~256 MB RAM)" \
     "INSTALL_SESSIONS|Browser terminal sessions (shell + tmux + dashboard panel)" \
     "INSTALL_CLAUDE|Claude Code binary (available as a session command)" \
+    "INSTALL_CLAUDE_SKILLS|Claude skills + starter templates deployed to ~/.claude/" \
     "INSTALL_DASHBOARD|platform dashboard landing page"
   do
     var="${entry%%|*}"
@@ -123,6 +124,7 @@ STEPS=(
   09-claude-code.sh
   10-dashboard.sh
   11-session-manager.sh
+  12-claude-skills.sh
   99-verify.sh
 )
 

@@ -12,6 +12,10 @@ echo "== session helper (shell) =="
 bash "${HERE}/test_session_helper.sh" || rc=1
 echo
 
+echo "== claude-skills deploy (shell) =="
+bash "${HERE}/test_claude_skills_deploy.sh" || rc=1
+echo
+
 echo "== session-manager (python) =="
 python3 -m unittest discover -s "${HERE}" -p 'test_*.py' -v || rc=1
 echo

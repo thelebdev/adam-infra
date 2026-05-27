@@ -119,6 +119,14 @@ bootstrap (it prompts once, per component, and remembers the answers in
 - **Claude Code** on the host for the admin user — optional. Run
   `claude` from a browser terminal session, or directly over SSH on the
   host. Same binary either way.
+- **Claude skills + commands + starter templates** deployed to each
+  operator's `~/.claude/` (optional, `INSTALL_CLAUDE_SKILLS`). The skills
+  live in `platform/claude/skills/` and are symlinked into every user's
+  home — `git pull` rolls updates to the whole box. `CLAUDE.md.example`
+  and `settings.json.example` are seeded only when the operator doesn't
+  already have a personal copy; nothing is ever overwritten. The
+  repo-scoped `.claude/skills/` (the `overall-infra-architect` skill that
+  governs work in this repo) is unrelated and isn't deployed system-wide.
 
 ### Login flow (browser, any device)
 

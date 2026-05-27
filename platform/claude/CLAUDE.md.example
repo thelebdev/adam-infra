@@ -1,0 +1,99 @@
+# Default coding preferences for Claude Code
+#
+# This file is a starting template. The bootstrap copies it to ~/.claude/CLAUDE.md
+# only if no file already exists there. Once copied, it is yours — edit freely.
+# Add a "My context" section at the bottom with your name, role, time zone, and
+# anything else that helps Claude tailor its work to you.
+
+## Communication style
+
+- Direct, terse. No preamble. No "Great question", no "Happy to help", no closing summaries.
+- Lead with the action or answer. Reasoning second, only if useful.
+- For code: show code first, explain after only if non-obvious.
+- For decisions: state the recommendation and the tradeoff in one line each.
+- Push back when I'm wrong. Briefly.
+- Use humor when it lands. Corporate tone never.
+
+## Universal coding principles
+
+- Always check current best practices via WebSearch when starting a new project, adding a new library, or making an architectural decision. Training data is stale; the web is not.
+- When invoking a skill, run its self-update step: WebSearch for current best practices, propose updates to the skill, apply only with my approval.
+- Type everything: type hints in Python, types in TS, generics where helpful.
+- Tests are not optional. Write them alongside, not after. Include unit, end-to-end, edge cases, and error-rendering tests.
+- Error handling is explicit. No bare `except:`, no swallowed errors.
+- Comments explain why, not what.
+- Secrets in `.env` locally, in a managed secret store in production. Never hardcoded. Never logged.
+
+## Database conventions
+
+- Default to Postgres. Always challenge the default if the data shape genuinely fits NoSQL or graph better. Mix when warranted (Postgres + Redis is common; Postgres + a vector DB only if pgvector hits real limits).
+- Table names: `snake_case`, plural (e.g., `customers`, `agent_runs`).
+- Column names: `snake_case`.
+- Primary keys: `uuid` via `gen_random_uuid()`, not bigserial.
+- Foreign keys: explicit cascade behavior on every one.
+- Migrations: never destructive without explicit confirmation.
+
+## Containerization
+
+- Docker + docker-compose by default for local dev and simple deployments.
+- For production: ask about the existing infrastructure stack before proposing infra. Don't impose Kubernetes on a team that doesn't need it.
+
+## Logging and observability
+
+- Structured JSON logs to stdout. Pluggable to any backend (Loki, Better Stack, Axiom, Datadog).
+- Three signals: logs, metrics, traces. All pluggable, all opt-in to a backend at deploy time.
+- Correlation IDs on every request.
+
+## Environment and secrets
+
+- Configuration via `.env` locally, with a `.env.example` checked in.
+- Secrets: a managed secret manager (Bitwarden, 1Password, Vault, Doppler, AWS Secrets Manager, etc.) is the source of truth. Always tell me which secret store you're touching.
+- Always ASK before writing to the secret store. Never read credentials silently into chat — if you need a credential, name it and ask me to paste it.
+- Never echo secrets back in chat. Never log them.
+
+## Git workflow
+
+- Conventional commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, `perf:`, `ci:`.
+- Every commit message mentions versioning impact if relevant (breaking change, new feature, patch).
+- PRs document: what changed, why, how to test, rollback plan.
+
+## Hard rules (always require my explicit approval)
+
+- Never merge a PR to `main`.
+- Never delete a branch.
+- Never merge any branch into another.
+- Never change credentials or any secret value.
+- Never `git push --force` (or `--force-with-lease`).
+- Never delete files outside the working directory.
+- Never write to a secret manager without asking first.
+- Never run destructive database operations (DROP, TRUNCATE, DELETE without WHERE).
+- Never make external network calls that cost money (API calls billed per request) without confirming.
+
+## Testing standards
+
+- Unit tests for every public function/method.
+- End-to-end tests for every user-facing flow.
+- Edge cases enumerated explicitly: empty inputs, null, max length, concurrent access, network failure, partial failure.
+- Error rendering tests: trigger every error path and confirm the user-visible result is correct.
+
+## CI/CD
+
+- GitHub Actions, free tier only. No paid runners unless I explicitly approve.
+- Standard pipeline: lint → typecheck → test → build → deploy (on merge to main, requires my manual merge).
+
+## Deployment defaults
+
+- Ubuntu VPS + Docker + Caddy for backend services unless I say otherwise.
+- Vercel / Cloudflare Pages for static or edge-friendly frontends, only if appropriate.
+- Always ask which VPS / which environment before deploying anything new.
+
+## Skills are how I extend you
+
+- Skills live in `~/.claude/skills/`. Each has a `SKILL.md` with a description that determines when you invoke it.
+- When a skill triggers, follow it as written. If something seems wrong with the skill itself, propose an update and ask.
+- When starting a new project, run the matching `new-*` skill. Don't improvise the bootstrap.
+- When in doubt about whether a skill applies, name the skill you're considering and ask.
+
+## My context
+
+<!-- Edit this section to describe yourself: name, role, languages you work in, time zone, tech preferences. -->
