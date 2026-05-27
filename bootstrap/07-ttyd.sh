@@ -95,51 +95,44 @@ install -m 755 -o root -g root "${SANDBOX_SRC}" /usr/local/bin/sandbox-shell
 log INFO "installed /usr/local/bin/sandbox-shell"
 
 # break — the TOTP-gated "exit the sandbox" helper. Lives in /usr/local/sbin
-# (root-only territory) and is invoked exclusively via `sudo break`. The
-# sudoers fragment below pins it to `PASSWD: /usr/local/sbin/break` with a
-# zero timestamp_timeout, so the operator's sudo password is required every
-# single time — never cached from a recent sudo elsewhere.
+# and is exec'd by tmux via `respawn-pane` (the in-sandbox `break` shim
+# triggers that). NOT invoked via sudo: bwrap's unprivileged user namespace
+# makes sudo impossible inside the sandbox (PR_SET_NO_NEW_PRIVS=1 + nobody
+# UID mapping). The script validates TOTP directly against the Authelia
+# SQLite DB, which is readable by the admin user via group membership
+# (see bootstrap/05-authelia.sh — chmod 640 root:<admin>).
 BREAK_SRC="${INFRA_ROOT}/platform/ttyd/break.py"
 [ -f "${BREAK_SRC}" ] || die "missing ${BREAK_SRC}"
 install -m 755 -o root -g root "${BREAK_SRC}" /usr/local/sbin/break
 log INFO "installed /usr/local/sbin/break"
 
-# claude-break-out — the second TOTP-gated escape, invoked via `sudo
-# claude-break-out`. Inside the sandbox the operator types plain `claude`;
-# the /usr/local/bin/claude shim (bind-mounted into the sandbox by
-# sandbox-shell) prefixes the sudo. Same sudoers/PASSWD/timestamp policy
-# as break: real password every invocation, then a fresh TOTP inside the
-# script.
+# claude-break-out — same model as break, but execs Claude Code after the
+# TOTP validation instead of dropping to bash. The in-sandbox `claude`
+# shim respawns the pane with this helper; this helper validates TOTP
+# and execs `bash -l -c 'exec claude'` so .profile sets up PATH for the
+# admin's `~/.local/bin/claude`.
 CLAUDE_BREAK_SRC="${INFRA_ROOT}/platform/ttyd/claude-break-out.py"
 [ -f "${CLAUDE_BREAK_SRC}" ] || die "missing ${CLAUDE_BREAK_SRC}"
 install -m 755 -o root -g root "${CLAUDE_BREAK_SRC}" /usr/local/sbin/claude-break-out
 log INFO "installed /usr/local/sbin/claude-break-out"
 
-# Ensure the in-sandbox /usr/local/bin/claude shim source is executable.
-# sandbox-shell bind-mounts it directly from the repo (no copy elsewhere),
-# so the +x bit must be set on the repo file itself.
-CLAUDE_SHIM_SRC="${INFRA_ROOT}/platform/ttyd/claude-shim"
-[ -f "${CLAUDE_SHIM_SRC}" ] || die "missing ${CLAUDE_SHIM_SRC}"
-chmod 0755 "${CLAUDE_SHIM_SRC}"
-log INFO "ensured +x on ${CLAUDE_SHIM_SRC}"
+# Ensure the in-sandbox shim sources are executable. sandbox-shell bind-
+# mounts them directly from the repo (no copy elsewhere), so the +x bit
+# must be set on the repo files themselves.
+for shim in claude-shim break-shim; do
+  SHIM_SRC="${INFRA_ROOT}/platform/ttyd/${shim}"
+  [ -f "${SHIM_SRC}" ] || die "missing ${SHIM_SRC}"
+  chmod 0755 "${SHIM_SRC}"
+  log INFO "ensured +x on ${SHIM_SRC}"
+done
 
-# Sudoers fragment for `sudo break` + `sudo claude-break-out`. Render with
-# the admin username substituted, validate with `visudo -cf` BEFORE moving
-# it into place so a malformed fragment never wedges sudo.
-SUDOERS_SRC="${INFRA_ROOT}/platform/ttyd/break.sudoers.template"
-[ -f "${SUDOERS_SRC}" ] || die "missing ${SUDOERS_SRC}"
-SUDOERS_TMP="$(mktemp)"
-trap 'rm -f "${SUDOERS_TMP}"' EXIT
-sed "s/__ADMIN_USER__/${ADMIN}/g" "${SUDOERS_SRC}" > "${SUDOERS_TMP}"
-chmod 0440 "${SUDOERS_TMP}"
-if visudo -cf "${SUDOERS_TMP}" >/dev/null; then
-  install -m 0440 -o root -g root "${SUDOERS_TMP}" /etc/sudoers.d/break
-  log INFO "installed /etc/sudoers.d/break (operator=${ADMIN})"
-else
-  die "rendered break.sudoers failed visudo validation; refusing to install"
+# Cleanup: the old sudoers fragment (when break required `sudo`) is no
+# longer used. Remove it if a previous bootstrap installed it so the
+# unused rule doesn't outlive the design that needed it.
+if [ -f /etc/sudoers.d/break ]; then
+  rm -f /etc/sudoers.d/break
+  log INFO "removed /etc/sudoers.d/break (no longer needed; break+claude use tmux respawn)"
 fi
-trap - EXIT
-rm -f "${SUDOERS_TMP}"
 
 # Resolve WORKSPACE_ROOT: the directory tree that holds the projects browser
 # sessions may open in. Every session is confined to this tree — it can

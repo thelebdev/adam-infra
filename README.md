@@ -106,14 +106,18 @@ bootstrap (it prompts once, per component, and remembers the answers in
 - **ttyd web terminal** serving per-user browser sessions at
   `sessions.<PRIMARY_DOMAIN>` — every session is a bubblewrap-sandboxed
   login shell inside a workspace directory you choose. Workspace is the
-  only writable place; the rest of the filesystem is read-only / tmpfs.
+  only writable place; system paths (`/usr`, `/etc`, `/bin`, `/sbin`,
+  `/lib*`) are mounted read-only and *nothing else is mounted at all* —
+  `cd /var` returns `No such file or directory`. Home dirs are tmpfs so
+  secrets at `~/.ssh`, `~/.gnupg`, etc. are invisible.
   No SSH client needed. Persistent via tmux: a refresh or dropped
   connection never kills a session.
-  - **`sudo break`** — escape the sandbox to an unconfined login bash.
-    Requires sudo password + a fresh Authelia TOTP code, every invocation.
+  - **`break`** — escape the sandbox to an unconfined login bash.
+    Requires a fresh Authelia TOTP code (typed into the prompt that
+    appears after the pane respawns). No sudo, no password — the TOTP
+    *is* the gate.
   - **`claude`** — launch Claude Code unconfined in the same pane. Same
-    TOTP gate as `break`. (The shim adds the implicit `sudo`, so the
-    operator just types `claude`.)
+    TOTP gate as `break`.
 - **Platform dashboard** at `<PRIMARY_DOMAIN>` and
   `dashboard.<PRIMARY_DOMAIN>` — a landing page indexing every tool above,
   with a live "Terminal sessions" panel for list / start / stop.
