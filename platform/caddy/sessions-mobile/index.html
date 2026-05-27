@@ -32,11 +32,50 @@
   }
   #bar button:active, #bar button.on { background: #2a2a2a; color: #fff; }
   #bar button.sticky.on { background: #3a3a3a; color: #ffd479; }
+
+  /* --- file upload ----------------------------------------------------
+     The drop overlay covers the iframe area only when a drag enters the
+     window or an upload is in flight. The result toast slides up from
+     the bottom (above the toolbar), shows the absolute path of the
+     uploaded file, and offers Copy and Send-to-terminal. */
+  #drop {
+    position: fixed; left: 0; right: 0; top: 0;
+    bottom: calc(var(--bar-h) + env(safe-area-inset-bottom, 0px));
+    background: rgba(20, 40, 70, .88); color: #cfe; z-index: 10;
+    display: none; align-items: center; justify-content: center;
+    font: 16px ui-monospace, monospace; text-align: center; padding: 0 24px;
+    pointer-events: none;
+  }
+  #drop.on { display: flex; }
+  #toast {
+    position: fixed; left: 8px; right: 8px;
+    bottom: calc(var(--bar-h) + env(safe-area-inset-bottom, 0px) + 8px);
+    background: #1c1f26; border: 1px solid #3a4252; border-radius: 8px;
+    padding: 10px 12px; color: #e6e6e6; z-index: 11;
+    font: 13px ui-monospace, monospace; box-shadow: 0 6px 24px rgba(0,0,0,.5);
+    display: none;
+  }
+  #toast.on { display: block; }
+  #toast .path { word-break: break-all; color: #cdd5e0; margin-bottom: 8px; }
+  #toast .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  #toast button {
+    flex: 1 1 auto; min-width: 90px; padding: 8px 10px;
+    background: #2a3140; color: #fff; border: 1px solid #3a4252;
+    border-radius: 6px; font: inherit; cursor: pointer; touch-action: manipulation;
+  }
+  #toast button.primary { background: #3a5d8f; border-color: #4d75b3; }
+  #toast button:active { filter: brightness(1.2); }
+  #toast .err { color: #ff9b9b; }
 </style>
 </head>
 <body>
 <iframe id="frame" title="terminal" allow="clipboard-read; clipboard-write"></iframe>
 <div id="bar" role="toolbar" aria-label="terminal keys">
+  <!-- Upload triggers the hidden file picker. On mobile the picker shows
+       Photos / Files; on desktop it opens the OS file dialog. Drag-and-drop
+       and image paste also funnel into the same uploadFile() path below. -->
+  <button id="uploadBtn" title="upload a file to your workspace">+</button>
+  <input id="filePick" type="file" style="display:none" multiple>
   <button data-seq="\x1b">Esc</button>
   <button data-seq="\t">Tab</button>
   <button class="sticky" data-mod="ctrl">Ctrl</button>
@@ -71,6 +110,8 @@
   <button data-seq="\x1b[5~">PgUp</button>
   <button data-seq="\x1b[6~">PgDn</button>
 </div>
+<div id="drop">Drop file to upload to your workspace</div>
+<div id="toast" role="status" aria-live="polite"></div>
 <script>
 (function () {
   var frame = document.getElementById('frame');
@@ -176,6 +217,160 @@
   bar.addEventListener('touchstart', function (e) {
     if (e.target.closest('button')) e.preventDefault();
   }, { passive: false });
+
+  // --- file upload --------------------------------------------------------
+  // Three entry points feed the same uploadFile():
+  //   1. The "+" button → hidden <input type=file> → user picks
+  //   2. Drag-and-drop onto the page (desktop)
+  //   3. Paste of an image from the system clipboard (any platform)
+  // On success we render a toast with the absolute path the operator can
+  // pass to Claude Code via `@path` — with Copy and Send-to-terminal
+  // shortcuts so they don't have to retype it.
+  var drop = document.getElementById('drop');
+  var toast = document.getElementById('toast');
+  var filePick = document.getElementById('filePick');
+  var uploadBtn = document.getElementById('uploadBtn');
+
+  function showToast(html, isError) {
+    toast.innerHTML = html;
+    toast.classList.add('on');
+    if (isError) {
+      // Auto-dismiss errors after a few seconds; success stays until
+      // dismissed since the user needs the path.
+      setTimeout(function () { toast.classList.remove('on'); }, 5000);
+    }
+  }
+
+  function dismissToast() { toast.classList.remove('on'); }
+
+  function renderSuccess(desc) {
+    var path = desc.path;
+    var kb = (desc.size / 1024).toFixed(1);
+    toast.innerHTML = '';
+    var row1 = document.createElement('div');
+    row1.className = 'path';
+    row1.textContent = path + '   (' + kb + ' KB)';
+    var row2 = document.createElement('div');
+    row2.className = 'row';
+
+    var copy = document.createElement('button');
+    copy.className = 'primary';
+    copy.textContent = 'Copy path';
+    copy.onclick = function () {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(path).then(function () {
+          copy.textContent = 'Copied';
+          setTimeout(function () { copy.textContent = 'Copy path'; }, 1200);
+        }).catch(function () {
+          fallbackCopy(path); copy.textContent = 'Copied';
+        });
+      } else { fallbackCopy(path); copy.textContent = 'Copied'; }
+    };
+
+    var send = document.createElement('button');
+    send.textContent = 'Send to terminal';
+    send.title = 'Type @' + path + ' into the active session — Claude Code reads it as an attached file';
+    send.onclick = function () {
+      // Insert `@<path> ` (with trailing space) into the running TUI.
+      // Claude Code's prompt recognises @<path> as an attachment; for a
+      // plain shell it's just typed text the operator can edit or delete.
+      sendBytes('@' + path + ' ');
+      dismissToast();
+    };
+
+    var close = document.createElement('button');
+    close.textContent = 'Dismiss';
+    close.onclick = dismissToast;
+
+    row2.appendChild(copy);
+    row2.appendChild(send);
+    row2.appendChild(close);
+    toast.appendChild(row1);
+    toast.appendChild(row2);
+    toast.classList.add('on');
+  }
+
+  function fallbackCopy(s) {
+    var ta = document.createElement('textarea');
+    ta.value = s; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+    document.body.removeChild(ta);
+  }
+
+  function uploadFile(file) {
+    if (!file) return;
+    showToast('Uploading ' + (file.name || 'file') + '…', false);
+    var fd = new FormData();
+    fd.append('file', file, file.name || 'upload');
+    fetch('/api/upload', { method: 'POST', body: fd, credentials: 'same-origin' })
+      .then(function (r) {
+        if (!r.ok) {
+          return r.json().catch(function () { return { error: 'HTTP ' + r.status }; })
+            .then(function (j) { throw new Error(j.error || ('HTTP ' + r.status)); });
+        }
+        return r.json();
+      })
+      .then(function (desc) { renderSuccess(desc); })
+      .catch(function (err) {
+        showToast('<span class="err">upload failed:</span> ' + String(err.message || err), true);
+      });
+  }
+
+  function uploadFiles(files) {
+    if (!files || !files.length) return;
+    // Single-file UX for now: only the first file in a multi-drop gets
+    // surfaced in the toast. The endpoint also only reads the first part.
+    uploadFile(files[0]);
+  }
+
+  uploadBtn.addEventListener('click', function (e) {
+    e.preventDefault();
+    filePick.click();
+  });
+  filePick.addEventListener('change', function () {
+    uploadFiles(filePick.files);
+    filePick.value = '';  // allow re-picking the same file
+  });
+
+  // Drag-and-drop on the page (desktop). The iframe captures drag events
+  // when the pointer is over it, so we listen on the window with capture
+  // and preventDefault to keep the browser from navigating to the file.
+  var dragDepth = 0;
+  window.addEventListener('dragenter', function (e) {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+    dragDepth++;
+    drop.classList.add('on');
+    e.preventDefault();
+  }, true);
+  window.addEventListener('dragleave', function () {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) drop.classList.remove('on');
+  }, true);
+  window.addEventListener('dragover', function (e) {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
+  }, true);
+  window.addEventListener('drop', function (e) {
+    if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    dragDepth = 0;
+    drop.classList.remove('on');
+    uploadFiles(e.dataTransfer.files);
+  }, true);
+
+  // Clipboard paste — images copied from the OS / another app land here.
+  // On iOS this fires when the user long-presses → Paste from the system
+  // share sheet over our page (not the iframe).
+  window.addEventListener('paste', function (e) {
+    if (!e.clipboardData) return;
+    var items = e.clipboardData.items || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind === 'file') {
+        var f = items[i].getAsFile();
+        if (f) { uploadFile(f); e.preventDefault(); return; }
+      }
+    }
+  });
 })();
 </script>
 </body>

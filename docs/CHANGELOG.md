@@ -8,6 +8,23 @@ Each entry: date, mode (Maintain / Manage / Create), one-line summary.
 
 ## Entries
 
+- **2026-05-27** — Create — **Drag-and-drop file upload into browser
+  sessions.** New `POST /api/upload` on the session-manager service
+  accepts multipart bodies up to 25 MiB and writes them to
+  `~/workspace/uploads/<authelia-user>/<unix-ts>-<safe-filename>`. The
+  /m/ wrapper grows three input paths into that endpoint:
+  (1) a `+` toolbar button that opens the OS file picker (Photos /
+  Files on iOS, Gallery / Files on Android, Finder on macOS, etc.);
+  (2) drag-and-drop onto the page on desktop, with a translucent overlay
+  while the file is in the air; (3) clipboard paste of an image —
+  handy when you screenshot something on mobile and want to drop it
+  straight into a session. On success a toast surfaces the absolute path
+  with **Copy path** and **Send to terminal** buttons. The second one
+  types `@<path> ` into the active session, which Claude Code reads as
+  an attached file. Caddy gains a `/api/*` route on `sessions.<domain>`
+  alongside the existing one on `dashboard.<domain>` so the wrapper
+  can hit the API same-origin without CORS.
+
 - **2026-05-27** — Maintain — **One-tap toggle to select-and-copy text from
   the browser terminal.** Tmux mouse mode is on by default — great for
   scrollback, but it owns click-drag, so text "selected" with the mouse

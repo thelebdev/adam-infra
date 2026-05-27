@@ -136,6 +136,18 @@ __SUBDOMAIN_SESSIONS__.__PRIMARY_DOMAIN__ {
 			redir /m/ 301
 		}
 
+		# session-manager's /api/* is reachable on the sessions vhost so
+		# the /m/ wrapper can POST /api/upload to drop screenshots /
+		# artifacts into the operator's workspace without bouncing across
+		# to the dashboard subdomain (which would otherwise require CORS).
+		# Same Authelia gate, same upstream as the dashboard's /api/*.
+		# session-manager is installed alongside sessions, so no separate
+		# component gate is needed here — the outer `component:sessions`
+		# block already controls presence.
+		handle /api/* {
+			reverse_proxy 127.0.0.1:7682
+		}
+
 		# Auto-route mobile UAs landing on `/` into the wrapper, preserving
 		# the original ?arg=<session> query. `Mobi` matches Android Chrome
 		# and Mobile Safari; `iPhone` belt-and-suspenders for older UAs.

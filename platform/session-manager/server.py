@@ -61,6 +61,21 @@ SEP = "|"
 TMUX_TIMEOUT = 10
 MAX_BODY = 64 * 1024
 
+# Cap for POST /api/upload bodies. Sized for the kinds of artifacts the
+# operator drops into a session — a phone screenshot, a tcpdump pcap, a
+# small log bundle — without inviting arbitrary file-server abuse.
+MAX_UPLOAD = 25 * 1024 * 1024  # 25 MiB
+
+# Where /api/upload writes incoming files. Per-Authelia-user subdirectories
+# under the workspace root so uploads sit alongside the operator's projects
+# (same OS user owns them, so any session can read them) but each Authelia
+# identity has its own quarantined drop folder. Names are timestamp-prefixed
+# to avoid collision and keep arrival order legible.
+UPLOAD_DIR = Path(os.environ.get("SESSION_UPLOAD_DIR",
+                                 str(Path(os.environ.get(
+                                     "SESSION_WORKSPACE_ROOT",
+                                     HOME / "workspace")) / "uploads")))
+
 # Allowed command choices and the default. Sessions are always sandboxed
 # shells today; Claude Code launches from inside the shell via the
 # TOTP-gated `claude` shim. The single-entry tuple is kept for the
@@ -109,6 +124,70 @@ def confine_dir(req: str) -> Path:
     if resolved != root and root not in resolved.parents:
         raise ApiError(400, "directory is outside the workspace")
     return resolved
+
+
+def _parse_first_upload(body: bytes, ctype: str) -> tuple[bytes, str]:
+    """Pull the first file part out of a multipart/form-data body.
+
+    Hand-rolled because the stdlib's modern replacement for ``cgi.FieldStorage``
+    is the email.parser, which is awkward for binary bodies. We support a
+    single file per request — the dashboard / wrapper UI never sends more —
+    and ignore non-file form fields. Returns (bytes, original-filename).
+    Raises ApiError on a malformed body."""
+    m = re.search(r'boundary=(?:"([^"]+)"|([^;]+))', ctype)
+    if not m:
+        raise ApiError(400, "missing multipart boundary")
+    boundary = b"--" + (m.group(1) or m.group(2)).strip().encode("latin-1")
+    # Split on the boundary. Element 0 is the preamble (before first
+    # boundary), last is the epilogue ("--\r\n"); both are noise.
+    parts = body.split(boundary)
+    for raw in parts[1:-1]:
+        if raw.startswith(b"\r\n"):
+            raw = raw[2:]
+        idx = raw.find(b"\r\n\r\n")
+        if idx < 0:
+            continue
+        headers = raw[:idx].decode("latin-1", "replace")
+        m2 = re.search(r'filename="((?:[^"\\]|\\.)*)"', headers)
+        if not m2:
+            continue
+        # The body slice ends just before the boundary's trailing CRLF.
+        data = raw[idx + 4:]
+        if data.endswith(b"\r\n"):
+            data = data[:-2]
+        return data, m2.group(1)
+    raise ApiError(400, "no file part in multipart body")
+
+
+def _sanitize_filename(name: str) -> str:
+    """Reduce an upload's original filename to a safe leaf name. Strips
+    any directory components a malicious client might send, then collapses
+    everything outside [A-Za-z0-9._-] to underscores and caps the length."""
+    base = name.replace("\\", "/").split("/")[-1]
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", base)[:120]
+    # Disallow names that resolve to the parent or current dir, and the
+    # all-dots edge case that some filesystems treat as no-name.
+    if cleaned in {"", ".", ".."} or set(cleaned) == {"."}:
+        return "upload"
+    return cleaned
+
+
+def save_upload(user: str, body: bytes, ctype: str) -> dict[str, Any]:
+    """Persist a multipart upload to ``UPLOAD_DIR/{user}/`` and return the
+    descriptor the API hands back: absolute path, byte size, sanitized
+    filename. Per-user dir is created lazily."""
+    data, raw_name = _parse_first_upload(body, ctype)
+    safe = _sanitize_filename(raw_name)
+    user_dir = UPLOAD_DIR / user
+    user_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+    final = user_dir / f"{int(time.time())}-{safe}"
+    # Defensive: ensure the resolved final path is still inside UPLOAD_DIR
+    # so a sanitizer regression can't be exploited by a crafted filename.
+    if Path(os.path.realpath(UPLOAD_DIR)) not in \
+       Path(os.path.realpath(final)).parents:
+        raise ApiError(400, "filename escapes upload dir")
+    final.write_bytes(data)
+    return {"path": str(final), "size": len(data), "filename": final.name}
 
 
 def workspace_dirs(limit: int = 200) -> list[str]:
@@ -444,6 +523,23 @@ class Handler(BaseHTTPRequestHandler):
                 kill_session(user, name)
                 log("info", "session stopped", user=user, session=name)
                 self._send_json(200, {"ok": True, "name": name})
+            elif method == "POST" and path == "/api/upload":
+                # Sized cap is separate from MAX_BODY (which is for tiny
+                # JSON control payloads) — uploads are deliberately allowed
+                # up to MAX_UPLOAD for screenshots / small artifacts.
+                clen = int(self.headers.get("Content-Length", "0") or "0")
+                if clen <= 0:
+                    raise ApiError(400, "missing or empty body")
+                if clen > MAX_UPLOAD:
+                    raise ApiError(413, "upload exceeds size limit")
+                ctype = self.headers.get("Content-Type", "")
+                if not ctype.lower().startswith("multipart/form-data"):
+                    raise ApiError(400, "expected multipart/form-data")
+                body = self.rfile.read(clen)
+                desc = save_upload(user, body, ctype)
+                log("info", "upload", user=user,
+                    path=desc["path"], size=desc["size"])
+                self._send_json(200, desc)
             else:
                 raise ApiError(404, "not found")
         except ApiError as exc:
