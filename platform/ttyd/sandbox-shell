@@ -31,13 +31,18 @@ SOCKET="${SOCKET_DIR}/${TTYD_USER}.sock"
 
 target="${1:-${WORKSPACE_ROOT}}"
 # Compute the equivalent of `target` *inside* the sandbox. The workspace is
-# bind-mounted at /workspace; anything outside it just lands at /workspace.
-inside_chdir="/workspace"
+# bind-mounted at /home/sandbox/workspace (inside the /home tmpfs so bwrap
+# can create the mount point under a read-only root — bwrap 0.9.0 on
+# Ubuntu 24.04 refuses to mkdir mount points under a --ro-bind / / root).
+# Anything outside the host workspace just lands at the sandbox workspace
+# root.
+SANDBOX_WS="/home/sandbox/workspace"
+inside_chdir="${SANDBOX_WS}"
 case "${target}" in
-  "${WORKSPACE_ROOT}") inside_chdir="/workspace" ;;
+  "${WORKSPACE_ROOT}") inside_chdir="${SANDBOX_WS}" ;;
   "${WORKSPACE_ROOT}/"*)
     rel="${target#${WORKSPACE_ROOT}/}"
-    inside_chdir="/workspace/${rel}"
+    inside_chdir="${SANDBOX_WS}/${rel}"
     ;;
 esac
 
@@ -65,17 +70,17 @@ pane="${TMUX_PANE:-}"
 
 exec /usr/bin/bwrap \
   --ro-bind / / \
-  --ro-bind /opt/infra/platform/ttyd/claude-shim /usr/local/bin/claude \
   --tmpfs /tmp \
   --tmpfs /var/tmp \
   --tmpfs /home \
   --tmpfs /root \
-  --bind "${WORKSPACE_ROOT}" /workspace \
+  --bind "${WORKSPACE_ROOT}" "${SANDBOX_WS}" \
+  --ro-bind /opt/infra/platform/ttyd/claude-shim /home/sandbox/bin/claude \
   "${sock_args[@]}" \
   --setenv HOME /home/sandbox \
   --setenv USER "${TTYD_USER}" \
   --setenv LOGNAME "${TTYD_USER}" \
-  --setenv PATH "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  --setenv PATH "/home/sandbox/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   --setenv TTYD_USER "${TTYD_USER}" \
   --setenv TMUX "${sandbox_tmux}" \
   --setenv TMUX_PANE "${pane}" \
