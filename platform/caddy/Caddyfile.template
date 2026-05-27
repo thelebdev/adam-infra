@@ -139,9 +139,18 @@ __SUBDOMAIN_SESSIONS__.__PRIMARY_DOMAIN__ {
 		# Auto-route mobile UAs landing on `/` into the wrapper, preserving
 		# the original ?arg=<session> query. `Mobi` matches Android Chrome
 		# and Mobile Safari; `iPhone` belt-and-suspenders for older UAs.
+		#
+		# The `not header Sec-Fetch-Dest iframe` clause breaks the
+		# wrapper-iframes-self loop: the wrapper at /m/ iframes `/`, and
+		# without this exclusion the iframe load would also be 302'd to
+		# /m/, which would iframe `/` again, ad infinitum (browser caps
+		# nesting at ~10 levels and renders the deepest frame as blank).
+		# Sec-Fetch-Dest is sent by Safari 16+, Chrome 80+, Firefox 90+;
+		# anything older falls through and gets the desktop ttyd UI.
 		@sessions_mobile_root {
 			path /
 			header_regexp User-Agent (Mobi|Android|iPhone|iPod)
+			not header Sec-Fetch-Dest iframe
 		}
 		redir @sessions_mobile_root /m/?{query} 302
 
