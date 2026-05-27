@@ -119,7 +119,7 @@
 
   // Carry the original query (?arg=<session>) into the iframe so existing
   // bookmarks like /m/?arg=foo land on the right tmux session.
-  frame.src = '/' + (location.search || '');
+  frame.src = '/_term/' + (location.search || '');
 
   // Decode the \xNN escapes the buttons declare — the HTML attribute value
   // is a literal "\x1b" string, not the byte. data-mod is handled separately.
@@ -333,30 +333,42 @@
     filePick.value = '';  // allow re-picking the same file
   });
 
-  // Drag-and-drop on the page (desktop). The iframe captures drag events
-  // when the pointer is over it, so we listen on the window with capture
-  // and preventDefault to keep the browser from navigating to the file.
+  // Drag-and-drop. The iframe (ttyd) covers nearly the whole viewport, and
+  // drag events from outside the browser fire on whichever document the
+  // cursor is over — they don't cross the iframe boundary, so listening on
+  // the parent window alone misses every drop that lands on ttyd. The
+  // iframe is same-origin (we already reach into it for the xterm textarea),
+  // so attach the same handlers to its document too once it loads.
   var dragDepth = 0;
-  window.addEventListener('dragenter', function (e) {
-    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
-    dragDepth++;
-    drop.classList.add('on');
-    e.preventDefault();
-  }, true);
-  window.addEventListener('dragleave', function () {
-    dragDepth = Math.max(0, dragDepth - 1);
-    if (dragDepth === 0) drop.classList.remove('on');
-  }, true);
-  window.addEventListener('dragover', function (e) {
-    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
-  }, true);
-  window.addEventListener('drop', function (e) {
-    if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
-    e.preventDefault();
-    dragDepth = 0;
-    drop.classList.remove('on');
-    uploadFiles(e.dataTransfer.files);
-  }, true);
+  function attachDnd(target) {
+    target.addEventListener('dragenter', function (e) {
+      if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+      dragDepth++;
+      drop.classList.add('on');
+      e.preventDefault();
+    }, true);
+    target.addEventListener('dragleave', function () {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) drop.classList.remove('on');
+    }, true);
+    target.addEventListener('dragover', function (e) {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
+    }, true);
+    target.addEventListener('drop', function (e) {
+      if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+      e.preventDefault();
+      dragDepth = 0;
+      drop.classList.remove('on');
+      uploadFiles(e.dataTransfer.files);
+    }, true);
+  }
+  attachDnd(window);
+  frame.addEventListener('load', function () {
+    try {
+      var doc = frame.contentDocument;
+      if (doc) attachDnd(doc);
+    } catch (e) { /* not ready or cross-origin — iframe drops will be missed */ }
+  });
 
   // Clipboard paste — images copied from the OS / another app land here.
   // On iOS this fires when the user long-presses → Paste from the system

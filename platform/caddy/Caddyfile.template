@@ -127,46 +127,36 @@ __SUBDOMAIN_SESSIONS__.__PRIMARY_DOMAIN__ {
 	route {
 		import authelia_gate
 
-		# Mobile wrapper assets — static files under /srv/sessions-mobile.
-		handle_path /m/* {
-			root * /srv/sessions-mobile
-			file_server
+		# ttyd at /_term/* — matches the `-b /_term` flag on the ttyd
+		# service so xterm.js, /token, /ws, and static assets resolve
+		# under that prefix. The wrapper page at / iframes /_term/ for
+		# the actual TUI, then drag-and-drop / paste-image upload and
+		# the on-screen key toolbar all live in the parent document.
+		handle /_term/* {
+			reverse_proxy 127.0.0.1:7681
 		}
-		handle /m {
-			redir /m/ 301
+		handle /_term {
+			redir /_term/ 301
 		}
 
-		# session-manager's /api/* is reachable on the sessions vhost so
-		# the /m/ wrapper can POST /api/upload to drop screenshots /
-		# artifacts into the operator's workspace without bouncing across
-		# to the dashboard subdomain (which would otherwise require CORS).
-		# Same Authelia gate, same upstream as the dashboard's /api/*.
-		# session-manager is installed alongside sessions, so no separate
-		# component gate is needed here — the outer `component:sessions`
-		# block already controls presence.
+		# session-manager's /api/* — same Authelia gate, drives
+		# /api/upload for screenshot drops and the dashboard's session
+		# list/start/stop endpoints.
 		handle /api/* {
 			reverse_proxy 127.0.0.1:7682
 		}
 
-		# Auto-route mobile UAs landing on `/` into the wrapper, preserving
-		# the original ?arg=<session> query. `Mobi` matches Android Chrome
-		# and Mobile Safari; `iPhone` belt-and-suspenders for older UAs.
-		#
-		# The `not header Sec-Fetch-Dest iframe` clause breaks the
-		# wrapper-iframes-self loop: the wrapper at /m/ iframes `/`, and
-		# without this exclusion the iframe load would also be 302'd to
-		# /m/, which would iframe `/` again, ad infinitum (browser caps
-		# nesting at ~10 levels and renders the deepest frame as blank).
-		# Sec-Fetch-Dest is sent by Safari 16+, Chrome 80+, Firefox 90+;
-		# anything older falls through and gets the desktop ttyd UI.
-		@sessions_mobile_root {
-			path /
-			header_regexp User-Agent (Mobi|Android|iPhone|iPod)
-			not header Sec-Fetch-Dest iframe
-		}
-		redir @sessions_mobile_root /m/?{query} 302
+		# Back-compat: bookmarks at /m/ from before this route flip
+		# forward to the new root, preserving any ?arg=<session>.
+		redir /m/* /?{query} 301
+		redir /m /?{query} 301
 
-		reverse_proxy 127.0.0.1:7681
+		# Wrapper UI at the root for every UA. drag-and-drop / paste
+		# upload + on-screen key toolbar are active everywhere.
+		handle {
+			root * /srv/sessions-mobile
+			file_server
+		}
 	}
 }
 # <<<component:sessions

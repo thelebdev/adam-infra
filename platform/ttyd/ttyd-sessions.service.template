@@ -38,7 +38,7 @@ Environment=SESSION_WORKSPACE_ROOT=__WORKSPACE_ROOT__
 Environment=SESSION_SOCKET_DIR=__SOCKET_DIR__
 Environment=SESSION_TMUX_CONF=__INFRA_ROOT__/platform/ttyd/session-tmux.conf
 WorkingDirectory=__WORKSPACE_ROOT__
-ExecStart=/usr/bin/ttyd -p 7681 -i 127.0.0.1 -W -a -H Remote-User -t scrollback=10000 __ADMIN_HOME__/.local/bin/session
+ExecStart=/usr/bin/ttyd -b /_term -p 7681 -i 127.0.0.1 -W -a -H Remote-User -t scrollback=10000 __ADMIN_HOME__/.local/bin/session
 Restart=on-failure
 RestartSec=3
 # KillMode=process: on stop/restart systemd kills only ttyd itself, never the
