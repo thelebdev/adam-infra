@@ -1,35 +1,34 @@
 #!/usr/bin/env python3
 """claude-break-out — TOTP-gated launch of Claude Code with break-out.
 
-Invoked as ``sudo claude-break-out`` from inside a tmux-managed bwrap'd
-shell (in practice, via the ``/usr/local/bin/claude`` shim that the sandbox
-puts on PATH — so the operator just types ``claude``). Sudo verifies the
-operator's password every invocation (see /etc/sudoers.d/break:
-``Defaults!claude-break-out timestamp_timeout=0``). This tool then prompts
-for the operator's 6-digit Authelia TOTP code, validates it against the
-secret in Authelia's encrypted SQLite store, and on success replaces the
-calling pane's process with an unconfined login bash that immediately
-``exec``s Claude Code.
+Invoked by /home/sandbox/bin/claude (the claude-shim bound into the
+sandbox) via ``tmux respawn-pane -k -- /usr/local/sbin/claude-break-out``.
+The tmux server runs OUTSIDE the sandbox as the admin user, so by the
+time this script starts the pane is already unconfined.
 
-The replacement shell is spawned by tmux itself — which runs outside the
-sandbox — so the pane *becomes* unconfined. Same window, same scrollback,
-no new tab. Bash is used as a one-shot launcher so ``.profile`` runs first
-(to put ``~/.local/bin`` on PATH where ``claude`` lives), then ``exec``s
-claude with no shell layered underneath. Quitting claude exits the pane.
+This script prompts for the operator's 6-digit Authelia TOTP code,
+validates it against the secret in Authelia's SQLite store, and on
+success ``exec``s a login bash that immediately ``exec``s Claude Code
+(so quitting claude exits the pane, no bash prompt layered underneath).
+``bash -l`` is used so ``.profile`` runs first and puts ``~/.local/bin``
+on PATH (where ``claude`` lives).
 
-Two factors required to launch:
-  1. The operator's host sudo password (the ``sudo`` wrapper validates).
-  2. The current 6-digit Authelia TOTP code (validated here against the
-     encrypted secret in Authelia's SQLite database).
+Why no sudo here:
+  bwrap on Ubuntu 24.04 ships non-setuid and creates an unprivileged user
+  namespace; that namespace mandates PR_SET_NO_NEW_PRIVS=1 (blocks setuid)
+  and maps host UID 0 to nobody/65534 inside the sandbox. Both make sudo
+  impossible inside the jail. The shim sidesteps this by asking tmux
+  (host-side, unconfined) to respawn the pane with this helper directly,
+  so the privilege barrier we authenticate against is the Authelia TOTP
+  alone — and that requires the admin user to be able to read the SQLite
+  DB + storage key (see bootstrap/05-authelia.sh — chmod 640 + group
+  membership grants exactly that).
 
-No network calls; the TOTP is verified locally against the same secret
-Authelia itself reads on login.
-
-Requires (installed by bootstrap/07-ttyd.sh):
+Requires (installed by bootstrap/07-ttyd.sh + 05-authelia.sh):
   - python3-cryptography  (AES-256-GCM decryption of Authelia's secret blob)
-  - /opt/infra/platform/authelia/db.sqlite3  (root-readable)
-  - /opt/infra/platform/authelia/secrets/storage  (root-readable; the
-     storage encryption key)
+  - /opt/infra/platform/authelia/data/db.sqlite3  (mode 640, root:<admin>)
+  - /opt/infra/platform/authelia/secrets/storage  (mode 640, root:<admin>;
+     the storage encryption key)
 
 NOTE: the TOTP validation logic below duplicates platform/ttyd/break.py.
 A follow-up PR should extract them into a shared module
@@ -56,7 +55,7 @@ except ImportError:  # pragma: no cover
     AESGCM = None  # type: ignore[assignment]
 
 AUTHELIA_DIR = Path("/opt/infra/platform/authelia")
-DB_PATH = AUTHELIA_DIR / "db.sqlite3"
+DB_PATH = AUTHELIA_DIR / "data" / "db.sqlite3"
 KEY_PATH = AUTHELIA_DIR / "secrets" / "storage"
 ENV_PATH = Path("/opt/infra/.env")
 TOTP_WINDOW_SECONDS = 30
@@ -127,23 +126,16 @@ def validate_totp(secret_b32: str, supplied: str) -> bool:
     return any(hmac.compare_digest(supplied, exp) for exp in expected)
 
 
-def respawn_pane_with_claude() -> None:
-    """Replace the calling pane's process with an unconfined login bash
-    that immediately execs Claude Code.
+def exec_claude_via_login_bash() -> None:
+    """Replace this process with a login bash that immediately execs claude.
 
-    ``tmux respawn-pane`` runs in tmux's process context (outside bwrap),
-    so the new bash and the claude it execs are both unconfined. Using
-    ``bash -l -c 'exec claude'`` is the simplest way to get PATH from
-    ``.profile`` (where ``~/.local/bin`` is added by 09-claude-code.sh)
-    without resolving the binary path here — and ``exec`` means quitting
-    claude exits the pane rather than dropping to a bash prompt."""
-    tmux = os.environ.get("TMUX") or die("not running inside a tmux pane")
-    pane = os.environ.get("TMUX_PANE") or die("TMUX_PANE not set")
-    sock = tmux.split(",", 1)[0]
-    subprocess.run(
-        ["tmux", "-S", sock, "respawn-pane", "-t", pane, "-k",
-         "--", "/bin/bash", "-l", "-c", "exec claude"],
-        check=True)
+    We're already outside the sandbox by the time this runs — the
+    claude-shim used ``tmux respawn-pane`` to escape, then tmux spawned
+    this script as a host-side child of the tmux server. ``bash -l``
+    sources ``.profile`` so ``~/.local/bin`` lands on PATH where
+    ``claude`` lives; ``exec claude`` means quitting claude exits the
+    pane rather than leaving a bash prompt underneath."""
+    os.execvp("/bin/bash", ["/bin/bash", "-l", "-c", "exec claude"])
 
 
 def resolve_username() -> str:
@@ -161,13 +153,6 @@ def resolve_username() -> str:
 
 
 def main() -> None:
-    if os.geteuid() != 0:
-        die("must be invoked via `sudo claude-break-out` "
-            "(the `claude` shim inside the sandbox does this for you)")
-    if not os.environ.get("TMUX"):
-        die("must be run inside a tmux session "
-            "(this is the 'launch Claude after TOTP' tool)")
-
     username = resolve_username()
     secret = get_totp_secret(username)
     code = getpass.getpass(f"Authelia TOTP for {username}: ").strip()
@@ -175,7 +160,7 @@ def main() -> None:
         die("invalid TOTP code")
 
     print(f"✓ verified — launching Claude for {username} outside the sandbox")
-    respawn_pane_with_claude()
+    exec_claude_via_login_bash()
 
 
 if __name__ == "__main__":

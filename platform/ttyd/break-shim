@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# break-shim — bind-mounted by sandbox-shell at /home/sandbox/bin/break
+# inside the bubblewrap sandbox. Operator types `break` to escape the
+# sandbox.
+#
+# Sudo cannot work inside an unprivileged user namespace (see
+# platform/ttyd/claude-shim for the long-form explanation), so we
+# escape the sandbox by asking the tmux server (which runs OUTSIDE bwrap
+# as the admin user) to respawn this pane with the TOTP-gated helper at
+# /usr/local/sbin/break. The helper validates Authelia TOTP and execs a
+# fresh login bash in the same pane.
+exec tmux respawn-pane -k -- /usr/local/sbin/break

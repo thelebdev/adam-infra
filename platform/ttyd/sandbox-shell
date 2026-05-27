@@ -4,13 +4,20 @@
 # This is what `session` runs when the user picks the "shell" command for a
 # browser terminal session. The jail's goals:
 #
-#   * Workspace is the only writable place — everything outside is read-only
-#     (so `cd /etc; vi something.conf` doesn't accidentally tamper with the
-#     host) and home dirs are tmpfs (so secrets at ~/.ssh, ~/.gnupg, etc. are
-#     invisible).
-#   * A user who wants out runs `sudo break` (validated by Authelia TOTP);
-#     `break` uses the bind-mounted tmux socket at /run/session.sock to
-#     `respawn-pane` this very pane with an unconfined bash, no new tab.
+#   * Workspace is the only writable place — system paths (/usr, /etc, /bin,
+#     /sbin, /lib*) are mounted read-only; everything else (/var, /opt, /mnt,
+#     /srv, /media, …) is simply not present, so the operator cannot even
+#     `cd` outside what's mounted. Home dirs are tmpfs (so secrets at ~/.ssh,
+#     ~/.gnupg, etc. are invisible).
+#   * Two TOTP-gated escapes from inside the sandbox:
+#       * `break`  — fresh login bash, unconfined
+#       * `claude` — Claude Code, unconfined
+#     Both shims (bound into /home/sandbox/bin/) ask the tmux server
+#     (running OUTSIDE bwrap as the admin user) to `respawn-pane` the
+#     calling pane with the corresponding host-side helper. Same window,
+#     same scrollback, no new tab. Sudo is NOT used — sudo cannot run
+#     inside an unprivileged user namespace; see platform/ttyd/break.py
+#     for the long-form rationale.
 #
 # Args:
 #   $1  outer absolute path to the project dir for the session — used to
@@ -69,13 +76,21 @@ fi
 pane="${TMUX_PANE:-}"
 
 exec /usr/bin/bwrap \
-  --ro-bind / / \
+  --ro-bind /usr /usr \
+  --ro-bind /etc /etc \
+  --ro-bind /bin /bin \
+  --ro-bind /sbin /sbin \
+  --ro-bind-try /lib /lib \
+  --ro-bind-try /lib32 /lib32 \
+  --ro-bind-try /lib64 /lib64 \
+  --ro-bind-try /libx32 /libx32 \
   --tmpfs /tmp \
-  --tmpfs /var/tmp \
+  --tmpfs /var \
   --tmpfs /home \
   --tmpfs /root \
   --bind "${WORKSPACE_ROOT}" "${SANDBOX_WS}" \
   --ro-bind /opt/infra/platform/ttyd/claude-shim /home/sandbox/bin/claude \
+  --ro-bind /opt/infra/platform/ttyd/break-shim /home/sandbox/bin/break \
   "${sock_args[@]}" \
   --setenv HOME /home/sandbox \
   --setenv USER "${TTYD_USER}" \
