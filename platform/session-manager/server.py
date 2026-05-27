@@ -153,19 +153,14 @@ def cmd_argv(label: str, target: Path | None = None) -> list[str]:
     """Resolve a command label to the argv tmux should spawn. Raises
     ApiError(400) for an unknown label — the allowlist is the boundary.
 
-    `target` is the (already-confined) per-session project directory; it is
-    passed to ``sandbox-shell`` which translates it into the equivalent
-    path inside the bubblewrap jail.
-
-    The only supported label is ``shell`` — every session is a sandboxed
-    login shell inside ``/usr/local/bin/sandbox-shell``. To launch Claude
-    Code, the operator types ``claude`` inside the shell (a TOTP-gated
-    shim at /usr/local/bin/claude inside the sandbox that breaks the pane
-    out of the jail; see platform/ttyd/claude-break-out.py).
+    `target` is accepted for API compatibility but unused — tmux's
+    ``new-session -c <dir>`` (set by the caller) handles the initial cwd,
+    so the argv just needs to be a login shell. Claude Code, if needed,
+    is started inside the shell by the operator running ``claude``.
     """
+    del target  # see docstring — tmux -c handles cwd
     if label == "shell":
-        target_str = str(target if target is not None else WORKSPACE_ROOT)
-        return ["/usr/local/bin/sandbox-shell", target_str]
+        return [resolve_shell(), "-l"]
     raise ApiError(400, f"unknown command '{label}'")
 
 

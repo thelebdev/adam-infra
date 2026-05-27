@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # 07 - ttyd: web terminal that serves per-user browser sessions.
 # Reachable at sessions.<PRIMARY_DOMAIN> through Caddy (gated by Authelia).
-# Binds to 127.0.0.1:7681 only. Each session runs either a login shell
-# (default) or Claude Code if `claude` is installed (09-claude-code).
+# Binds to 127.0.0.1:7681 only. Each session is a plain login shell
+# started in the operator's workspace dir; Claude Code (if installed)
+# is launched from inside the shell by typing `claude`.
 #
 # Runs as the admin user via systemd so the PTY inherits the admin's $HOME
 # and PATH. No container — keeps the moving parts small.
@@ -43,13 +44,7 @@ ADMIN_HOME="$(getent passwd "${ADMIN}" | cut -d: -f6)"
 # Install ttyd + tmux from Ubuntu universe. tmux is what makes the browser
 # sessions persistent: the session helper runs commands inside it, so a
 # refresh or a dropped connection never kills a session.
-#
-# bubblewrap   — `shell` sessions run inside a bwrap jail so an accidental
-#                `cd /etc; rm -rf .` from the browser doesn't reach the host.
-# python3-cryptography — used by /usr/local/sbin/break to validate the
-#                operator's Authelia TOTP code against the encrypted secret
-#                in Authelia's SQLite store (the "TOTP gate" for break-out).
-apt_ensure ttyd tmux bubblewrap python3-cryptography
+apt_ensure ttyd tmux
 
 # Ubuntu's ttyd package ships /usr/lib/systemd/system/ttyd.service which is
 # auto-enabled and runs `ttyd -i lo -p 7681 -O login` as root — i.e. a
@@ -74,8 +69,8 @@ if systemctl list-unit-files ttyd-claude.service >/dev/null 2>&1 \
 fi
 
 # Install the session helper that ttyd runs in the browser terminal. It
-# attaches to (or creates) per-user, per-name, workspace-confined tmux
-# sessions running either a shell or claude — see platform/ttyd/session.
+# attaches to (or creates) per-user, per-name tmux sessions running a
+# login shell in the workspace directory — see platform/ttyd/session.
 HELPER_SRC="${INFRA_ROOT}/platform/ttyd/session"
 HELPER="${ADMIN_HOME}/.local/bin/session"
 [ -f "${HELPER_SRC}" ] || die "missing ${HELPER_SRC}"
@@ -86,52 +81,21 @@ log INFO "installed session helper for ${ADMIN} (from ${HELPER_SRC})"
 # new command.
 rm -f "${ADMIN_HOME}/.local/bin/claude-session"
 
-# sandbox-shell — the bwrap launcher invoked by `session` when cmd=shell.
-# Lives in /usr/local/bin so any OS user can exec it (it's the entry point
-# for the jail, not the privileged escape route).
-SANDBOX_SRC="${INFRA_ROOT}/platform/ttyd/sandbox-shell"
-[ -f "${SANDBOX_SRC}" ] || die "missing ${SANDBOX_SRC}"
-install -m 755 -o root -g root "${SANDBOX_SRC}" /usr/local/bin/sandbox-shell
-log INFO "installed /usr/local/bin/sandbox-shell"
-
-# break — the TOTP-gated "exit the sandbox" helper. Lives in /usr/local/sbin
-# and is exec'd by tmux via `respawn-pane` (the in-sandbox `break` shim
-# triggers that). NOT invoked via sudo: bwrap's unprivileged user namespace
-# makes sudo impossible inside the sandbox (PR_SET_NO_NEW_PRIVS=1 + nobody
-# UID mapping). The script validates TOTP directly against the Authelia
-# SQLite DB, which is readable by the admin user via group membership
-# (see bootstrap/05-authelia.sh — chmod 640 root:<admin>).
-BREAK_SRC="${INFRA_ROOT}/platform/ttyd/break.py"
-[ -f "${BREAK_SRC}" ] || die "missing ${BREAK_SRC}"
-install -m 755 -o root -g root "${BREAK_SRC}" /usr/local/sbin/break
-log INFO "installed /usr/local/sbin/break"
-
-# claude-break-out — same model as break, but execs Claude Code after the
-# TOTP validation instead of dropping to bash. The in-sandbox `claude`
-# shim respawns the pane with this helper; this helper validates TOTP
-# and execs `bash -l -c 'exec claude'` so .profile sets up PATH for the
-# admin's `~/.local/bin/claude`.
-CLAUDE_BREAK_SRC="${INFRA_ROOT}/platform/ttyd/claude-break-out.py"
-[ -f "${CLAUDE_BREAK_SRC}" ] || die "missing ${CLAUDE_BREAK_SRC}"
-install -m 755 -o root -g root "${CLAUDE_BREAK_SRC}" /usr/local/sbin/claude-break-out
-log INFO "installed /usr/local/sbin/claude-break-out"
-
-# Ensure the in-sandbox shim sources are executable. sandbox-shell bind-
-# mounts them directly from the repo (no copy elsewhere), so the +x bit
-# must be set on the repo files themselves.
-for shim in claude-shim break-shim; do
-  SHIM_SRC="${INFRA_ROOT}/platform/ttyd/${shim}"
-  [ -f "${SHIM_SRC}" ] || die "missing ${SHIM_SRC}"
-  chmod 0755 "${SHIM_SRC}"
-  log INFO "ensured +x on ${SHIM_SRC}"
+# Cleanup of the now-removed bwrap sandbox feature. Earlier bootstrap
+# runs installed `/usr/local/bin/sandbox-shell`, `/usr/local/sbin/break`,
+# `/usr/local/sbin/claude-break-out`, and a sudoers fragment for the
+# TOTP-gated escape. Sessions now run plain `bash -l` in the workspace —
+# no sandbox, no escape hatch, no sudoers fragment. Remove leftovers so
+# nothing stale clings to PATH or /etc.
+for stale in /usr/local/bin/sandbox-shell /usr/local/sbin/break /usr/local/sbin/claude-break-out; do
+  if [ -e "${stale}" ]; then
+    rm -f "${stale}"
+    log INFO "removed legacy ${stale} (bwrap sandbox feature retired)"
+  fi
 done
-
-# Cleanup: the old sudoers fragment (when break required `sudo`) is no
-# longer used. Remove it if a previous bootstrap installed it so the
-# unused rule doesn't outlive the design that needed it.
 if [ -f /etc/sudoers.d/break ]; then
   rm -f /etc/sudoers.d/break
-  log INFO "removed /etc/sudoers.d/break (no longer needed; break+claude use tmux respawn)"
+  log INFO "removed legacy /etc/sudoers.d/break (bwrap sandbox feature retired)"
 fi
 
 # Resolve WORKSPACE_ROOT: the directory tree that holds the projects browser

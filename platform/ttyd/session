@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# session — per-user, persistent, workspace-confined browser terminal
-# sessions, backed by tmux. Every session runs a bubblewrap-sandboxed
-# login shell inside the workspace. To launch Claude Code, type `claude`
-# inside the shell — that triggers an Authelia TOTP gate and breaks the
-# pane out of the sandbox (see platform/ttyd/claude-break-out.py).
+# session — per-user, persistent browser terminal sessions, backed by tmux.
+# Every session is a plain `bash -l` started in the user's workspace
+# directory. No sandbox: this is a single-admin box, the operator already
+# has full SSH access, and a browser-only sandbox would add no real security
+# while costing a lot of complexity. Auth happens at Authelia (Caddy
+# forward_auth); transport is TLS.
 #
 # This is the command ttyd runs for the browser terminal
 # (see platform/ttyd/ttyd-sessions.service.template). It also works over SSH.
@@ -91,19 +92,13 @@ resolve_shell() {
 # Resolve a session command label to the argv tmux should run. Echoes one
 # argument per line so the caller can read into an array.
 #
-# `shell` runs inside a bubblewrap jail (/usr/local/bin/sandbox-shell does
-# the heavy lifting + computes the inside-jail cwd from $1) so accidental
-# `cd /etc; rm -rf .` from the browser can't reach the host. Two TOTP-gated
-# break-outs are available from inside:
-#   * `sudo break`   — drops to an unconfined login bash
-#   * `claude`       — runs the unconfined Claude Code (via the
-#                      /usr/local/bin/claude shim that sandbox-shell
-#                      bind-mounts into the jail)
-# See platform/ttyd/break.py and platform/ttyd/claude-break-out.py.
+# tmux's `-c <dir>` argument (in open_session below) handles the initial
+# cwd; the argv just needs to be a login shell. The `dir` argument is
+# accepted for API compatibility but unused.
 resolve_cmd_argv() {
   local label="${1-}" dir="${2-}"
   case "$label" in
-    shell) printf '%s\n' /usr/local/bin/sandbox-shell "${dir:-${WORKSPACE_ROOT}}" ;;
+    shell) printf '%s\n' "$(resolve_shell)" -l ;;
     *) return 1 ;;
   esac
 }

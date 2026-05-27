@@ -58,17 +58,18 @@ nope valid_cmd "rm"
 nope valid_cmd "shell;evil"
 
 echo "resolve_cmd_argv:"
-# `shell` sessions must launch via /usr/local/bin/sandbox-shell so they run
-# inside the bwrap jail — never spawn an unconfined bash directly.
-eq "shell argv[0] is sandbox-shell" \
-   "/usr/local/bin/sandbox-shell" \
+# `shell` sessions launch a plain login shell; tmux's `-c <dir>` (set in
+# open_session) handles the initial cwd, so the dir argument is unused.
+shell_path="$(resolve_shell)"
+eq "shell argv[0] is a real login shell" \
+   "$shell_path" \
    "$(resolve_cmd_argv shell "$WS/proj-a" | head -1)"
-eq "shell argv[1] is the requested dir" \
-   "$WS/proj-a" \
+eq "shell argv[1] is -l" \
+   "-l" \
    "$(resolve_cmd_argv shell "$WS/proj-a" | sed -n 2p)"
-eq "shell argv defaults dir to workspace root" \
-   "$WS" \
-   "$(resolve_cmd_argv shell | sed -n 2p)"
+eq "shell argv is the same regardless of dir arg" \
+   "$shell_path" \
+   "$(resolve_cmd_argv shell | head -1)"
 nope resolve_cmd_argv claude
 nope resolve_cmd_argv bogus
 

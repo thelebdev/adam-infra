@@ -104,28 +104,21 @@ bootstrap (it prompts once, per component, and remembers the answers in
   request via `forward_auth`.
 - **Docker + Compose v2** with log rotation.
 - **ttyd web terminal** serving per-user browser sessions at
-  `sessions.<PRIMARY_DOMAIN>` — every session is a bubblewrap-sandboxed
-  login shell inside a workspace directory you choose. Workspace is the
-  only writable place; system paths (`/usr`, `/etc`, `/bin`, `/sbin`,
-  `/lib*`) are mounted read-only and *nothing else is mounted at all* —
-  `cd /var` returns `No such file or directory`. Home dirs are tmpfs so
-  secrets at `~/.ssh`, `~/.gnupg`, etc. are invisible.
-  No SSH client needed. Persistent via tmux: a refresh or dropped
-  connection never kills a session.
-  - **`break`** — escape the sandbox to an unconfined login bash.
-    Requires a fresh Authelia TOTP code (typed into the prompt that
-    appears after the pane respawns). No sudo, no password — the TOTP
-    *is* the gate.
-  - **`claude`** — launch Claude Code unconfined in the same pane. Same
-    TOTP gate as `break`.
+  `sessions.<PRIMARY_DOMAIN>` — every session is a plain login shell
+  started in the workspace directory you choose. No SSH client needed.
+  Persistent via tmux: a refresh or dropped connection never kills a
+  session. (No in-session sandbox — this is a single-admin box, the
+  operator has SSH anyway, and a browser-only sandbox would cost a lot
+  of complexity for no real security gain. Authelia gates entry; TLS
+  gates transport.)
 - **Platform dashboard** at `<PRIMARY_DOMAIN>` and
   `dashboard.<PRIMARY_DOMAIN>` — a landing page indexing every tool above,
   with a live "Terminal sessions" panel for list / start / stop.
 - **Observability stack** (profile-selectable, dashboards bound to
   `127.0.0.1` internally, reached through Caddy).
-- **Claude Code** on the host for the admin user — optional, independent of
-  the browser terminal: launched via the TOTP-gated `claude` shim inside
-  a sandbox session, or directly over SSH on the host.
+- **Claude Code** on the host for the admin user — optional. Run
+  `claude` from a browser terminal session, or directly over SSH on the
+  host. Same binary either way.
 
 ### Login flow (browser, any device)
 

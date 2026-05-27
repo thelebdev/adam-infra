@@ -8,13 +8,6 @@
 # Secrets are mounted as files (the *_FILE env-var convention) rather than
 # passed via environment variables, to sidestep any docker-compose env
 # interpolation surprises with the secret values.
-#
-# Storage: ./data is bind-mounted at /config (Authelia's writable path) so
-# the SQLite database lands at /opt/infra/platform/authelia/data/db.sqlite3
-# on the host. This is what the TOTP-gated sandbox break-out helpers
-# (platform/ttyd/break.py, claude-break-out.py) read directly from the host
-# filesystem — they can't talk to the container. bootstrap/05-authelia.sh
-# migrates this from the older `authelia_data` named volume on first run.
 
 services:
   authelia:
@@ -28,10 +21,10 @@ services:
       AUTHELIA_SESSION_SECRET_FILE: /secrets/session
       AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE: /secrets/storage
     volumes:
-      - ./data:/config
       - ./configuration.yml:/config/configuration.yml:ro
       - ./users_database.yml:/config/users_database.yml:ro
       - ./secrets:/secrets:ro
+      - authelia_data:/config
     mem_limit: 192m
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9091/api/health"]
@@ -39,3 +32,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+volumes:
+  authelia_data:

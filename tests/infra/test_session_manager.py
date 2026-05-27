@@ -288,23 +288,25 @@ class SepTests(unittest.TestCase):
 
 
 class CmdArgvTests(unittest.TestCase):
-    def test_shell_argv_invokes_sandbox(self) -> None:
-        # `shell` sessions must run inside the bubblewrap jail launched by
-        # /usr/local/bin/sandbox-shell; never spawn an unconfined bash directly.
+    def test_shell_argv_is_a_login_shell(self) -> None:
+        # `shell` sessions launch a plain login shell. The `target` arg is
+        # unused — tmux's `new-session -c <dir>` handles cwd. No bwrap
+        # wrapper any more (see chore/remove-bwrap-sandbox).
         argv = server.cmd_argv("shell", Path("/home/adam/workspace/api"))
-        self.assertEqual(argv[0], "/usr/local/bin/sandbox-shell")
-        self.assertEqual(argv[1], "/home/adam/workspace/api")
-        self.assertNotIn("bash", argv)
+        self.assertEqual(len(argv), 2)
+        self.assertIn(argv[0], server.SAFE_SHELLS)
+        self.assertEqual(argv[1], "-l")
 
-    def test_shell_argv_defaults_to_workspace_root(self) -> None:
-        argv = server.cmd_argv("shell")
-        self.assertEqual(argv[0], "/usr/local/bin/sandbox-shell")
-        self.assertEqual(argv[1], str(server.WORKSPACE_ROOT))
+    def test_shell_argv_same_with_or_without_target(self) -> None:
+        # `target` is accepted for API compatibility but does not affect argv.
+        a = server.cmd_argv("shell")
+        b = server.cmd_argv("shell", Path("/some/where"))
+        self.assertEqual(a, b)
 
     def test_claude_argv_now_rejected(self) -> None:
         # "claude" is no longer a session-creation label — sessions are
-        # always sandboxed shells, claude launches from inside the shell
-        # via the TOTP-gated shim. The label must be rejected like any
+        # always plain shells, claude launches from inside the shell
+        # by typing it as a command. The label must be rejected like any
         # other unknown command.
         with self.assertRaises(server.ApiError) as ctx:
             server.cmd_argv("claude")

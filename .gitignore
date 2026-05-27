@@ -10,7 +10,8 @@ platform/dashboard/index.html
 platform/authelia/configuration.yml
 platform/authelia/users_database.yml
 platform/authelia/secrets/
-platform/authelia/data/
+platform/authelia/db.sqlite3
+platform/authelia/notification.txt
 .authelia-enrollment
 
 # Runtime
