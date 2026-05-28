@@ -201,3 +201,26 @@ __SUBDOMAIN_GRAFANA__.__PRIMARY_DOMAIN__ {
 	}
 }
 # <<<component:grafana
+
+# Operator-local application vhosts.
+#
+# The platform repo is application-agnostic; specific app backends
+# (their hostnames, ports, paths) are operator-specific and never
+# committed here. Each operator drops `.caddy` files into
+# `platform/caddy/Caddyfile.d/` containing one site block per app,
+# e.g.:
+#
+#     # /opt/infra/platform/caddy/Caddyfile.d/myapp.caddy
+#     api.myapp.example.com {
+#         import secure_headers
+#         reverse_proxy 127.0.0.1:3100
+#     }
+#
+# That directory is gitignored (`.gitkeep` keeps the dir itself in repo
+# so the docker-compose mount has a target). After dropping a file, run
+# `docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+# --adapter caddyfile` — no Caddy restart needed.
+#
+# An empty Caddyfile.d/ is fine; the glob below silently matches
+# nothing and Caddy behaves as if the line wasn't here.
+import /etc/caddy/Caddyfile.d/*.caddy

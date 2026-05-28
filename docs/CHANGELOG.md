@@ -8,6 +8,24 @@ Each entry: date, mode (Maintain / Manage / Create), one-line summary.
 
 ## Entries
 
+- **2026-05-28** — Create — **`Caddyfile.d/` import mechanism for
+  operator-local application vhosts.** The platform repo is
+  application-agnostic; specific app backends (their hostnames, ports,
+  paths) are operator-specific and never committed here. New mechanism:
+  `Caddyfile.template` ends with `import /etc/caddy/Caddyfile.d/*.caddy`;
+  `platform/caddy/docker-compose.yml` mounts `./Caddyfile.d` into the
+  container at `/etc/caddy/Caddyfile.d` (ro); the directory itself is
+  tracked via `.gitkeep` and its contents are gitignored. Operators drop
+  one `.caddy` file per app (e.g.,
+  `Caddyfile.d/myapp.caddy` containing a single `api.myapp.example.com {
+  reverse_proxy 127.0.0.1:3100 }` block) and reload Caddy with
+  `docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+  --adapter caddyfile` — no Caddy restart needed after the initial
+  mount add. An empty `Caddyfile.d/` is a no-op; the glob silently
+  matches nothing. This replaces the hand-editing pattern that was
+  previously the only way to add application vhosts and that was wiped
+  on every `06-caddy.sh` re-render.
+
 - **2026-05-27** — Create — **PreToolUse hook to block leaking private info
   on `git commit` / `git push`.** New `platform/claude/hooks/check-private-info.sh`
   reads the PreToolUse JSON, gates to Bash commands containing

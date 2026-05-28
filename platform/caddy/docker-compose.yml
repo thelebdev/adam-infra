@@ -17,6 +17,10 @@ services:
       - NET_BIND_SERVICE
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Operator-local application vhosts — *.caddy files in this dir are
+      # imported from Caddyfile.template's trailing `import` directive.
+      # Tracked via .gitkeep; contents are gitignored (per-operator).
+      - ./Caddyfile.d:/etc/caddy/Caddyfile.d:ro
       - ../dashboard:/srv/dashboard:ro
       - ./sessions-mobile:/srv/sessions-mobile:ro
       - caddy_data:/data

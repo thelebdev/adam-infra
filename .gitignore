@@ -6,6 +6,11 @@
 *.pem
 platform/caddy/Caddyfile
 platform/caddy/.basicauth.env
+# Operator-local application vhost fragments (one .caddy file per app).
+# The directory itself is tracked (.gitkeep) so the docker-compose mount
+# has a target; the files inside are per-operator and never shared.
+platform/caddy/Caddyfile.d/*
+!platform/caddy/Caddyfile.d/.gitkeep
 platform/dashboard/index.html
 platform/authelia/configuration.yml
 platform/authelia/users_database.yml
