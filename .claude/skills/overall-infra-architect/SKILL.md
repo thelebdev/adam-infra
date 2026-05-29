@@ -11,6 +11,27 @@ repos (each in its own `*-infra` repo) consume. When a request crosses into
 application-layer territory, defer to the application's own architect skill
 if one exists in that repo.
 
+## Required reading on session start
+
+Before doing any work in this repo, read in order:
+
+1. The Adam-the-being meta layer (in the sibling `meta` repo at `../meta/`):
+   - `../meta/VISION.md`
+   - `../meta/CONVENTIONS.md`
+   - `../meta/MANIFEST.md`
+2. This repo's durable layer:
+   - `_self/identity.md`
+   - `_self/intent.md`
+   - `_self/decisions/`
+   - `_self/learnings.md`
+   - `_self/interface.md`
+3. The `META.md` at the repo root, which names this reading order.
+
+Decisions made here must not violate the meta layer. If a local need
+conflicts with it, raise the conflict at the meta level rather than diverge
+silently. Infra is a *tissue* of Adam-the-being; this skill governs work in
+that tissue.
+
 ## The supreme test
 
 Every change you propose must preserve this property:
